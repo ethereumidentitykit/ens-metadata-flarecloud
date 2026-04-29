@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "predeploy": "node scripts/prepare-cloudflare-bindings.mjs",
     "deploy": "wrangler deploy",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

@@ -29,7 +29,7 @@ A subset of [`ensdomains/ens-metadata-service`](https://github.com/ensdomains/en
 
 ## One-click deploy
 
-Click the **Deploy to Cloudflare** button above. Cloudflare forks this repo into your GitHub, provisions the R2 bucket (`ens-metadata-ipfs-cache`) and KV namespace (`RESOLVER_CACHE`) on your account, writes the real IDs back into the forked `wrangler.toml`, and deploys.
+Click the **Deploy to Cloudflare** button above. Cloudflare forks this repo into your GitHub and runs `npm run deploy`. The deploy script creates or reuses the R2 bucket (`ens-metadata-ipfs-cache`) and KV namespace (`RESOLVER_CACHE`) on your account, then writes the account-specific KV namespace ID into the build copy of `wrangler.toml` before publishing.
 
 The setup page will prompt for these optional secrets — leave them blank unless you need them:
 
@@ -56,14 +56,9 @@ Open http://localhost:8787 for the Scalar docs. Miniflare simulates R2 and KV lo
 
 ## Deploy manually
 
-If you'd rather clone and deploy from the CLI instead of using the button, create the resources on your account and plug the KV IDs into `wrangler.toml` yourself:
+If you'd rather clone and deploy from the CLI instead of using the button, log in with Wrangler, add any optional secrets you need, then deploy. `npm run deploy` will create or reuse the KV namespace and R2 bucket for the authenticated account before publishing.
 
 ```sh
-npx wrangler r2 bucket create ens-metadata-ipfs-cache
-npx wrangler r2 bucket create ens-metadata-ipfs-cache-preview
-npx wrangler kv namespace create RESOLVER_CACHE
-npx wrangler kv namespace create RESOLVER_CACHE --preview
-
 npx wrangler secret put THE_GRAPH_API_KEY      # optional
 npx wrangler secret put OPENSEA_API_KEY        # optional
 npx wrangler secret put RPC_API_KEY            # optional
