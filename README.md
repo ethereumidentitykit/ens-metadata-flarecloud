@@ -11,8 +11,8 @@ A subset of [`ensdomains/ens-metadata-service`](https://github.com/ensdomains/en
 | Endpoint                                        | Upstream |       Flarecloud        |
 | ----------------------------------------------- | :------: | :---------------------: |
 | `GET /`                                         |    ✓     |     ✓ (Scalar docs)     |
-| `GET /docs`                                     |    ✓     |       ✗ (use `/`)       |
-| `GET /favicon.ico`                              |    ✓     |            ✗            |
+| `GET /docs`                                     |    ✓     |     ✓ (Scalar docs)     |
+| `GET /favicon.ico`                              |    ✓     |         ✓ (204)         |
 | `GET /{network}/{contract}/{tokenId}`           |    ✓     |            ✓            |
 | `GET /{network}/{contract}/{tokenId}/image`     |    ✓     | ✗ (needs `node-canvas`) |
 | `GET /{network}/{contract}/{tokenId}/rasterize` |    ✓     |   ✗ (needs Puppeteer)   |
@@ -23,6 +23,7 @@ A subset of [`ensdomains/ens-metadata-service`](https://github.com/ensdomains/en
 | `GET /queryNFT`                                 |    ✓     |            ✓            |
 | `GET /preview/{name}`                           |    ✓     |            ✗            |
 | `GET /openapi.json`                             |    ✗     |            ✓            |
+| `GET /llms.txt`                                 |    ✗     |            ✓            |
 
 `network` is one of `mainnet`, `sepolia`, `holesky`. `contract` is the BaseRegistrar (v1) or NameWrapper (v2) address.
 
@@ -33,6 +34,7 @@ Click the **Deploy to Cloudflare** button above. Cloudflare forks this repo into
 The setup page will prompt for these optional secrets — leave them blank unless you need them:
 
 - `THE_GRAPH_API_KEY` — authenticated Graph queries
+- `OPENSEA_API_KEY` — OpenSea-hosted NFT metadata used by ERC-721 and ERC-1155 avatar/header lookups
 - `RPC_API_KEY` — if your configured RPC URL needs auth
 - `PINATA_GATEWAY_TOKEN` — for Pinata IPFS gateway
 
@@ -63,6 +65,7 @@ npx wrangler kv namespace create RESOLVER_CACHE
 npx wrangler kv namespace create RESOLVER_CACHE --preview
 
 npx wrangler secret put THE_GRAPH_API_KEY      # optional
+npx wrangler secret put OPENSEA_API_KEY        # optional
 npx wrangler secret put RPC_API_KEY            # optional
 npx wrangler secret put PINATA_GATEWAY_TOKEN   # optional
 

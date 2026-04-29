@@ -10,6 +10,7 @@ import {
   TokenIdParam,
 } from "../schemas";
 import { cacheTagHeader, nameTag, tokenTag } from "../lib/cacheTags";
+import { respondFromCache } from "../lib/responseCache";
 
 export const nameImageRoutes = new OpenAPIHono<{ Bindings: Env }>();
 
@@ -128,70 +129,74 @@ function tagsFor(
 }
 
 nameImageRoutes.openapi(svgRoute, async (c) => {
-  const { network: networkName, contract, tokenId } = c.req.valid("param");
-  const tokenHex = tokenIdToHex(tokenId);
-  const cacheKey = {
-    network: networkName,
-    contract,
-    tokenHex,
-    version: SVG_CACHE_VERSION,
-  };
-  const hit = await getGenerated(c.env, cacheKey);
-  if (hit) {
+  return respondFromCache(caches.default, c.req.raw, c.executionCtx, async () => {
+    const { network: networkName, contract, tokenId } = c.req.valid("param");
+    const tokenHex = tokenIdToHex(tokenId);
+    const cacheKey = {
+      network: networkName,
+      contract,
+      tokenHex,
+      version: SVG_CACHE_VERSION,
+    };
+    const hit = await getGenerated(c.env, cacheKey);
+    if (hit) {
+      return respond(
+        hit.bytes,
+        hit.contentType,
+        tagsFor(networkName, contract, tokenHex, hit.name),
+      );
+    }
+
+    const result = await renderSvgFromParams(c, networkName, contract, tokenId);
+    if (result.kind === "response") return result.response;
+
+    const { embedSatoshiFont } = await import("../services/nameImage");
+    const selfContained = embedSatoshiFont(result.svg);
+    const bytes = utf8Bytes(selfContained);
+    c.executionCtx.waitUntil(
+      putGenerated(c.env, cacheKey, bytes, SVG_CONTENT_TYPE, result.name),
+    );
     return respond(
-      hit.bytes,
-      hit.contentType,
-      tagsFor(networkName, contract, tokenHex, hit.name),
-    ) as never;
-  }
-
-  const result = await renderSvgFromParams(c, networkName, contract, tokenId);
-  if (result.kind === "response") return result.response as never;
-
-  const { embedSatoshiFont } = await import("../services/nameImage");
-  const selfContained = embedSatoshiFont(result.svg);
-  const bytes = utf8Bytes(selfContained);
-  c.executionCtx.waitUntil(
-    putGenerated(c.env, cacheKey, bytes, SVG_CONTENT_TYPE, result.name),
-  );
-  return respond(
-    selfContained,
-    SVG_CONTENT_TYPE,
-    tagsFor(networkName, contract, tokenHex, result.name),
-  ) as never;
+      selfContained,
+      SVG_CONTENT_TYPE,
+      tagsFor(networkName, contract, tokenHex, result.name),
+    );
+  }) as never;
 });
 
 nameImageRoutes.openapi(pngRoute, async (c) => {
-  const { network: networkName, contract, tokenId } = c.req.valid("param");
-  const tokenHex = tokenIdToHex(tokenId);
-  const cacheKey = {
-    network: networkName,
-    contract,
-    tokenHex,
-    version: PNG_CACHE_VERSION,
-  };
-  const hit = await getGenerated(c.env, cacheKey);
-  if (hit) {
+  return respondFromCache(caches.default, c.req.raw, c.executionCtx, async () => {
+    const { network: networkName, contract, tokenId } = c.req.valid("param");
+    const tokenHex = tokenIdToHex(tokenId);
+    const cacheKey = {
+      network: networkName,
+      contract,
+      tokenHex,
+      version: PNG_CACHE_VERSION,
+    };
+    const hit = await getGenerated(c.env, cacheKey);
+    if (hit) {
+      return respond(
+        hit.bytes,
+        hit.contentType,
+        tagsFor(networkName, contract, tokenHex, hit.name),
+      );
+    }
+
+    const rasterizerPromise = import("../services/rasterize");
+    const result = await renderSvgFromParams(c, networkName, contract, tokenId);
+    if (result.kind === "response") return result.response;
+
+    const { rasterizeNameImageSvg } = await rasterizerPromise;
+    const png = await rasterizeNameImageSvg(result.svg);
+    const bytes = uint8Bytes(png);
+    c.executionCtx.waitUntil(
+      putGenerated(c.env, cacheKey, bytes, PNG_CONTENT_TYPE, result.name),
+    );
     return respond(
-      hit.bytes,
-      hit.contentType,
-      tagsFor(networkName, contract, tokenHex, hit.name),
-    ) as never;
-  }
-
-  const rasterizerPromise = import("../services/rasterize");
-  const result = await renderSvgFromParams(c, networkName, contract, tokenId);
-  if (result.kind === "response") return result.response as never;
-
-  const { rasterizeNameImageSvg } = await rasterizerPromise;
-  const png = await rasterizeNameImageSvg(result.svg);
-  const bytes = uint8Bytes(png);
-  c.executionCtx.waitUntil(
-    putGenerated(c.env, cacheKey, bytes, PNG_CONTENT_TYPE, result.name),
-  );
-  return respond(
-    bytes,
-    PNG_CONTENT_TYPE,
-    tagsFor(networkName, contract, tokenHex, result.name),
-  ) as never;
+      bytes,
+      PNG_CONTENT_TYPE,
+      tagsFor(networkName, contract, tokenHex, result.name),
+    );
+  }) as never;
 });

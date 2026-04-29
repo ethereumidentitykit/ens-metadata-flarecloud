@@ -11,6 +11,7 @@ export type Env = {
   SUBGRAPH_URL_HOLESKY: string;
 
   THE_GRAPH_API_KEY?: string;
+  OPENSEA_API_KEY?: string;
   RPC_API_KEY?: string;
   PINATA_GATEWAY_TOKEN?: string;
 

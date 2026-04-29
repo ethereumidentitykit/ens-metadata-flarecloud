@@ -18,8 +18,8 @@ import { createPublicClient, http, type PublicClient, getAddress } from "viem";
 import type { Env } from "../env";
 import { getNftChain } from "../lib/nftChains";
 import { badRequest, notFound, upstream, unsupported } from "../lib/errors";
-import { decodeDataUri } from "./avatarResolver";
-import { fetchIpfs, parseIpfs } from "./ipfs";
+import { arweaveGatewayUrl, decodeDataUri } from "./avatarResolver";
+import { fetchIpfs, fetchIpns, parseIpfs, parseIpns } from "./ipfs";
 import { HTTPS_IMAGE_TIMEOUT_MS, RPC_TIMEOUT_MS } from "../constants";
 
 export type NftAvatarRef = {
@@ -170,28 +170,54 @@ async function fetchMetadataJson(env: Env, uri: string): Promise<unknown> {
 		const { bytes } = decodeDataUri(uri);
 		return parseJson(new TextDecoder().decode(bytes), uri);
 	}
-	if (uri.startsWith("ipfs://") || uri.startsWith("ipfs/")) {
+	if (/^(?:ipfs:\/\/|ipfs\/)/i.test(uri)) {
 		const ref = parseIpfs(uri);
 		if (!ref) throw badRequest(`invalid ipfs URI in token metadata: ${uri}`);
 		const res = await fetchIpfs(env, ref);
 		return parseJson(await res.text(), uri);
 	}
-	if (uri.startsWith("ar://")) {
-		const rest = uri.slice("ar://".length);
-		if (!rest) throw badRequest(`malformed ar:// URI in token metadata: ${uri}`);
-		return fetchHttpsJson(`https://arweave.net/${rest}`);
+	if (/^(?:ipns:\/\/|ipns\/)/i.test(uri)) {
+		const ref = parseIpns(uri);
+		if (!ref) throw badRequest(`invalid ipns URI in token metadata: ${uri}`);
+		const res = await fetchIpns(env, ref);
+		return parseJson(await res.text(), uri);
+	}
+	if (/^ar:\/\//i.test(uri)) {
+		const url = arweaveGatewayUrl(uri);
+		if (!url) throw badRequest(`malformed ar:// URI in token metadata: ${uri}`);
+		return fetchHttpsJson(env, url);
 	}
 	if (/^https?:\/\//i.test(uri)) {
-		return fetchHttpsJson(uri);
+		return fetchHttpsJson(env, uri);
 	}
 	throw unsupported(`unsupported metadata URI scheme: ${uri.slice(0, 40)}…`);
 }
 
-async function fetchHttpsJson(url: string): Promise<unknown> {
+function maybeOpenSeaHeaders(env: Env, url: string): HeadersInit | undefined {
+	const host = safeHostname(url);
+	if (
+		env.OPENSEA_API_KEY &&
+		(host === "api.opensea.io" || host === "testnets-api.opensea.io")
+	) {
+		return { "X-API-KEY": env.OPENSEA_API_KEY };
+	}
+	return undefined;
+}
+
+function safeHostname(url: string): string | null {
+	try {
+		return new URL(url).hostname.toLowerCase();
+	} catch {
+		return null;
+	}
+}
+
+async function fetchHttpsJson(env: Env, url: string): Promise<unknown> {
 	const ctrl = new AbortController();
 	const timer = setTimeout(() => ctrl.abort(), HTTPS_IMAGE_TIMEOUT_MS);
 	try {
 		const res = await fetch(url, {
+			headers: maybeOpenSeaHeaders(env, url),
 			cf: { cacheTtl: 3600, cacheEverything: true },
 			signal: ctrl.signal,
 		} as RequestInit);

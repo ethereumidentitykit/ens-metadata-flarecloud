@@ -8,7 +8,7 @@ import {
   type AvatarKind,
 } from "./avatarResolver";
 import { createClient, getOwner, normalizeName } from "./ens";
-import { fetchIpfs, parseIpfs } from "./ipfs";
+import { fetchIpfs, fetchIpns, parseIpfs, parseIpns } from "./ipfs";
 import { resolveNftAvatar } from "./nftAvatar";
 import { sanitizeSvg } from "./sanitize";
 import { deleteResolved, getResolved, putResolved } from "../storage/kvCache";
@@ -48,6 +48,68 @@ function advertisedLengthExceeds(headers: Headers, max: number): boolean {
   if (!raw) return false;
   const n = Number(raw);
   return Number.isFinite(n) && n > max;
+}
+
+async function readStreamUnderSizeLimit(
+  src: ReadableStream<Uint8Array> | null,
+  max: number,
+): Promise<ArrayBuffer> {
+  if (!src) return new ArrayBuffer(0);
+
+  const reader = src.getReader();
+  const chunks: Uint8Array[] = [];
+  let seen = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+
+      seen += value.byteLength;
+      if (seen > max) {
+        const err = upstream(`image exceeds size limit: >${max} bytes`);
+        await reader.cancel(err).catch(() => {});
+        throw err;
+      }
+
+      chunks.push(value);
+    }
+  } catch (err) {
+    await reader.cancel(err).catch(() => {});
+    if (err instanceof HttpError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    throw upstream(`image fetch failed: ${msg}`, err);
+  } finally {
+    reader.releaseLock();
+  }
+
+  const out = new Uint8Array(seen);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out.buffer as ArrayBuffer;
+}
+
+async function readResponseBytes(
+  res: Response,
+  useStreamReader: boolean,
+): Promise<ArrayBuffer> {
+  if (useStreamReader) {
+    return readStreamUnderSizeLimit(res.body, MAX_IMAGE_BYTES);
+  }
+
+  try {
+    const bytes = await res.arrayBuffer();
+    assertUnderSizeLimit(bytes.byteLength);
+    return bytes;
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    throw upstream(`image fetch failed: ${msg}`, err);
+  }
 }
 
 async function sanitizeIfSvg(
@@ -135,8 +197,10 @@ export async function fetchImageBytes(
         );
       }
       const headerType = res.headers.get("content-type");
-      const rawBytes = await res.arrayBuffer();
-      assertUnderSizeLimit(rawBytes.byteLength);
+      const rawBytes = await readResponseBytes(
+        res,
+        !headerType || !res.headers.has("content-length"),
+      );
       const rawType = headerType ?? sniffMime(new Uint8Array(rawBytes));
       const image = await sanitizeIfSvg(rawBytes, rawType);
       const stored = image.body as ArrayBuffer;
@@ -146,28 +210,39 @@ export async function fetchImageBytes(
       return { ...image, etag };
     }
 
+    case "ipns": {
+      const ref = parseIpns(uri);
+      if (!ref) throw badRequest(`invalid ipns URI: ${uri}`);
+      const res = await fetchIpns(env, ref);
+      if (advertisedLengthExceeds(res.headers, MAX_IMAGE_BYTES)) {
+        throw upstream(
+          `image too large: content-length ${res.headers.get("content-length")} > ${MAX_IMAGE_BYTES}`,
+        );
+      }
+      const headerType = res.headers.get("content-type");
+      const rawBytes = await readResponseBytes(
+        res,
+        !headerType || !res.headers.has("content-length"),
+      );
+      const rawType = headerType ?? sniffMime(new Uint8Array(rawBytes));
+      return sanitizeIfSvg(rawBytes, rawType);
+    }
+
     case "https": {
       const validators = await headHttps(env, classified.url);
       const headers: HeadersInit = {};
       if (validators?.etag) headers["If-None-Match"] = validators.etag;
       if (validators?.lastModified) headers["If-Modified-Since"] = validators.lastModified;
-      const ctrl = new AbortController();
-      const headerTimeout = setTimeout(
-        () => ctrl.abort(),
-        HTTPS_IMAGE_TIMEOUT_MS,
-      );
       let res: Response;
       try {
         res = await fetch(classified.url, {
           headers,
           cf: { cacheTtl: 3600, cacheEverything: true },
-          signal: ctrl.signal,
+          signal: AbortSignal.timeout(HTTPS_IMAGE_TIMEOUT_MS),
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         throw upstream(`image fetch failed: ${msg}`, err);
-      } finally {
-        clearTimeout(headerTimeout);
       }
       if (res.status === 304 && validators) {
         const hit = await getHttps(env, classified.url);
@@ -190,8 +265,10 @@ export async function fetchImageBytes(
       const headerType = res.headers.get("content-type");
       const etag = res.headers.get("etag") ?? undefined;
       const lastModified = res.headers.get("last-modified") ?? undefined;
-      const rawBytes = await res.arrayBuffer();
-      assertUnderSizeLimit(rawBytes.byteLength);
+      const rawBytes = await readResponseBytes(
+        res,
+        !headerType || !res.headers.has("content-length"),
+      );
       const rawType = headerType ?? sniffMime(new Uint8Array(rawBytes));
       const image = await sanitizeIfSvg(rawBytes, rawType);
       const stored = image.body as ArrayBuffer;

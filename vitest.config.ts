@@ -30,4 +30,20 @@ export default defineConfig({
       },
     }),
   ],
+  test: {
+    include: ["test/**/*.test.ts"],
+    exclude: [
+      ".context/**",
+      "coverage/**",
+      "dist/**",
+      "build/**",
+      "node_modules/**",
+    ],
+    coverage: {
+      provider: "istanbul",
+      reporter: ["text", "json", "html"],
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.d.ts"],
+    },
+  },
 });

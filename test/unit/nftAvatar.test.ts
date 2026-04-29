@@ -1,6 +1,43 @@
-import { describe, expect, it } from "vitest";
-import { expandIdTemplate, extractImageUri } from "../../src/services/nftAvatar";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createPublicClient } from "viem";
+import type { Env } from "../../src/env";
+import { expandIdTemplate, extractImageUri, resolveNftAvatar } from "../../src/services/nftAvatar";
 import { classifyUri } from "../../src/services/avatarResolver";
+
+vi.mock("viem", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("viem")>();
+	return {
+		...actual,
+		createPublicClient: vi.fn(),
+		http: vi.fn(() => ({ type: "mock-http" })),
+	};
+});
+
+const testEnv = {
+	ETH_RPC_URL: "https://rpc.example/mainnet",
+	SEPOLIA_RPC_URL: "https://rpc.example/sepolia",
+	HOLESKY_RPC_URL: "https://rpc.example/holesky",
+	IPFS_GATEWAYS: "https://gateway.example",
+	OPENSEA_API_KEY: "opensea-key",
+} as Env;
+
+function mockReadContract() {
+	const readContract = vi.fn();
+	vi.mocked(createPublicClient).mockReturnValue({ readContract } as never);
+	return readContract;
+}
+
+function dataJson(value: unknown): string {
+	return `data:application/json,${encodeURIComponent(JSON.stringify(value))}`;
+}
+
+beforeEach(() => {
+	vi.mocked(createPublicClient).mockReset();
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
+});
 
 describe("expandIdTemplate", () => {
 	it("replaces {id} with 64-char zero-padded lowercase hex", () => {
@@ -109,5 +146,195 @@ describe("classifyUri eip155 namespace", () => {
 			namespace: "erc1155",
 			tokenId: "1",
 		});
+	});
+});
+
+describe("resolveNftAvatar", () => {
+	it("verifies ERC-721 ownership before returning the metadata image URI", async () => {
+		const readContract = mockReadContract();
+		readContract
+			.mockResolvedValueOnce(dataJson({ image: "https://images.example/erc721.png" }))
+			.mockResolvedValueOnce("0x0000000000000000000000000000000000000001");
+
+		const result = await resolveNftAvatar(
+			testEnv,
+			{
+				chainId: 1,
+				namespace: "erc721",
+				contract: "0x0000000000000000000000000000000000000002",
+				tokenId: "123",
+			},
+			"0x0000000000000000000000000000000000000001",
+		);
+
+		expect(result.imageUri).toBe("https://images.example/erc721.png");
+		expect(readContract.mock.calls.map(([call]) => call.functionName)).toEqual([
+			"tokenURI",
+			"ownerOf",
+		]);
+	});
+
+	it("verifies ERC-1155 ownership before returning the metadata image URI", async () => {
+		const readContract = mockReadContract();
+		readContract
+			.mockResolvedValueOnce(dataJson({ image_url: "https://images.example/erc1155.png" }))
+			.mockResolvedValueOnce(1n);
+
+		const result = await resolveNftAvatar(
+			testEnv,
+			{
+				chainId: 1,
+				namespace: "erc1155",
+				contract: "0x0000000000000000000000000000000000000002",
+				tokenId: "123",
+			},
+			"0x0000000000000000000000000000000000000001",
+		);
+
+		expect(result.imageUri).toBe("https://images.example/erc1155.png");
+		expect(readContract.mock.calls.map(([call]) => call.functionName)).toEqual([
+			"uri",
+			"balanceOf",
+		]);
+	});
+
+	it("sends the configured OpenSea API key only to OpenSea metadata hosts", async () => {
+		const readContract = mockReadContract();
+		readContract.mockResolvedValueOnce("https://api.opensea.io/api/v2/metadata/test");
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(JSON.stringify({ image: "https://images.example/opensea.png" })),
+		);
+
+		const result = await resolveNftAvatar(
+			testEnv,
+			{
+				chainId: 1,
+				namespace: "erc721",
+				contract: "0x0000000000000000000000000000000000000002",
+				tokenId: "123",
+			},
+			null,
+		);
+
+		expect(result.imageUri).toBe("https://images.example/opensea.png");
+		expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({
+			"X-API-KEY": "opensea-key",
+		});
+
+		readContract.mockReset();
+		fetchMock.mockClear();
+		readContract.mockResolvedValueOnce("https://testnets-api.opensea.io/api/v2/metadata/test");
+		fetchMock.mockResolvedValueOnce(
+			new Response(JSON.stringify({ image: "https://images.example/testnets-opensea.png" })),
+		);
+
+		await resolveNftAvatar(
+			testEnv,
+			{
+				chainId: 1,
+				namespace: "erc721",
+				contract: "0x0000000000000000000000000000000000000002",
+				tokenId: "123",
+			},
+			null,
+		);
+
+		expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({
+			"X-API-KEY": "opensea-key",
+		});
+
+		readContract.mockReset();
+		fetchMock.mockClear();
+		readContract.mockResolvedValueOnce("https://metadata.example/token.json");
+		fetchMock.mockResolvedValueOnce(
+			new Response(JSON.stringify({ image: "https://images.example/plain.png" })),
+		);
+
+		await resolveNftAvatar(
+			testEnv,
+			{
+				chainId: 1,
+				namespace: "erc721",
+				contract: "0x0000000000000000000000000000000000000002",
+				tokenId: "123",
+			},
+			null,
+		);
+
+		expect(fetchMock.mock.calls[0]?.[1]?.headers).toBeUndefined();
+	});
+
+	it("resolves IPNS metadata through the configured gateway", async () => {
+		const readContract = mockReadContract();
+		readContract.mockResolvedValueOnce("ipns://metadata.example/token.json");
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(JSON.stringify({ image: "ipns://images.example/avatar.png" })),
+		);
+
+		const result = await resolveNftAvatar(
+			testEnv,
+			{
+				chainId: 1,
+				namespace: "erc721",
+				contract: "0x0000000000000000000000000000000000000002",
+				tokenId: "123",
+			},
+			null,
+		);
+
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
+			"https://gateway.example/ipns/metadata.example/token.json",
+		);
+		expect(result.imageUri).toBe("ipns://images.example/avatar.png");
+	});
+
+	it("resolves IPFS metadata with a case-insensitive scheme prefix", async () => {
+		const readContract = mockReadContract();
+		readContract.mockResolvedValueOnce(
+			"IPFS://QmPChd2hVbrJ6bfo3WBcTW4iZnpHm8TEzWkLHmLpXhF68A/token.json",
+		);
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(JSON.stringify({ image: "ipfs://imageCid/avatar.png" })),
+		);
+
+		const result = await resolveNftAvatar(
+			testEnv,
+			{
+				chainId: 1,
+				namespace: "erc721",
+				contract: "0x0000000000000000000000000000000000000002",
+				tokenId: "123",
+			},
+			null,
+		);
+
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
+			"https://gateway.example/ipfs/QmPChd2hVbrJ6bfo3WBcTW4iZnpHm8TEzWkLHmLpXhF68A/token.json",
+		);
+		expect(result.imageUri).toBe("ipfs://imageCid/avatar.png");
+	});
+
+	it("resolves Arweave metadata through arweave.net", async () => {
+		const readContract = mockReadContract();
+		readContract.mockResolvedValueOnce("ar://abcDEF123/token.json");
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(JSON.stringify({ image: "ar://imageTx/avatar.png" })),
+		);
+
+		const result = await resolveNftAvatar(
+			testEnv,
+			{
+				chainId: 1,
+				namespace: "erc721",
+				contract: "0x0000000000000000000000000000000000000002",
+				tokenId: "123",
+			},
+			null,
+		);
+
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
+			"https://arweave.net/abcDEF123/token.json",
+		);
+		expect(result.imageUri).toBe("ar://imageTx/avatar.png");
 	});
 });

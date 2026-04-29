@@ -2,7 +2,46 @@ const DANGEROUS_TAGS =
   "script, foreignObject, iframe, object, embed, link, meta, form, input, textarea, button, base";
 
 const URL_ATTRS = new Set(["href", "xlink:href", "src", "action", "formaction"]);
-const DANGEROUS_SCHEMES = /^\s*(javascript|vbscript|data|file):/i;
+const DANGEROUS_SCHEMES = /^(javascript|vbscript|data|file):/;
+const ASCII_WHITESPACE_AND_C0 = /[\u0000-\u0020]+/g;
+const NAMED_HTML_REFS = new Map([
+  ["colon", ":"],
+  ["newline", "\n"],
+  ["tab", "\t"],
+]);
+
+function decodeHtmlCharRefs(value: string): string {
+  return value.replace(
+    /&(#x[0-9a-f]+|#\d+|colon|newline|tab);?/gi,
+    (match, ref: string) => {
+      const lowerRef = ref.toLowerCase();
+      if (!lowerRef.startsWith("#")) {
+        return NAMED_HTML_REFS.get(lowerRef) ?? match;
+      }
+
+      const codePoint = lowerRef.startsWith("#x")
+        ? Number.parseInt(lowerRef.slice(2), 16)
+        : Number.parseInt(lowerRef.slice(1), 10);
+      if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+        return match;
+      }
+
+      try {
+        return String.fromCodePoint(codePoint);
+      } catch {
+        return match;
+      }
+    },
+  );
+}
+
+function normalizeUrlForSchemeCheck(value: string): string {
+  return decodeHtmlCharRefs(value).toLowerCase().replace(ASCII_WHITESPACE_AND_C0, "");
+}
+
+function hasDangerousScheme(value: string): boolean {
+  return DANGEROUS_SCHEMES.test(normalizeUrlForSchemeCheck(value));
+}
 
 class RemoveElement {
   element(el: Element) {
@@ -21,7 +60,7 @@ class SanitizeAttributes {
       if (
         URL_ATTRS.has(name.toLowerCase()) &&
         value !== undefined &&
-        DANGEROUS_SCHEMES.test(value)
+        hasDangerousScheme(value)
       ) {
         el.removeAttribute(name);
       }

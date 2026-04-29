@@ -15,6 +15,7 @@ import {
 } from "../schemas";
 import { CACHE_API_MAX_AGE } from "../constants";
 import { cacheTagHeader, nameTag } from "../lib/cacheTags";
+import { respondFromCache } from "../lib/responseCache";
 
 const DEFAULT_IMAGES: Record<AvatarKind, string> = {
   avatar: defaultAvatarSvg,
@@ -143,9 +144,14 @@ function buildImageRoutes(kind: AvatarKind): OpenAPIHono<{ Bindings: Env }> {
   });
 
   app.openapi(metaRoute(kind), async (c) => {
-    const { network, name } = c.req.valid("param");
-    const uri = await resolveUriCached(c.env, kind, network, name, c.executionCtx);
-    return c.json({ name, network, uri, kind }, 200);
+    return respondFromCache(caches.default, c.req.raw, c.executionCtx, async () => {
+      const { network, name } = c.req.valid("param");
+      const uri = await resolveUriCached(c.env, kind, network, name, c.executionCtx);
+      const response = c.json({ name, network, uri, kind }, 200);
+      response.headers.set("cache-control", `public, max-age=${CACHE_API_MAX_AGE}`);
+      response.headers.set("cache-tag", cacheTagHeader(nameTag(network, name)));
+      return response;
+    }) as never;
   });
 
   return app;

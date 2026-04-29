@@ -5,7 +5,9 @@ import { getNetwork } from "../lib/networks";
 import { badRequest, notFound } from "../lib/errors";
 import { queryDomainByNamehash } from "../services/subgraph";
 import { normalizeName } from "../services/ens";
-import { NAME_WRAPPER_V2 } from "../constants";
+import { CACHE_API_MAX_AGE, NAME_WRAPPER_V2 } from "../constants";
+import { cacheTagHeader, nameTag, tokenTag } from "../lib/cacheTags";
+import { respondFromCache } from "../lib/responseCache";
 import { ErrorSchema, QueryNFTSchema } from "../schemas";
 
 export const queryNFTRoutes = new OpenAPIHono<{ Bindings: Env }>();
@@ -42,18 +44,26 @@ queryNFTRoutes.openapi(route, async (c) => {
 
   const name = normalizeName(rawName);
   const hash = namehash(name);
-  const record = await queryDomainByNamehash(network, c.env, hash);
-  if (!record) throw notFound(`domain not found: ${name}`);
+  return respondFromCache(caches.default, c.req.raw, c.executionCtx, async () => {
+    const record = await queryDomainByNamehash(network, c.env, hash);
+    if (!record) throw notFound(`domain not found: ${name}`);
 
-  return c.json(
-    {
-      name,
-      namehash: hash,
-      contract: NAME_WRAPPER_V2,
-      tokenId: BigInt(hash).toString(),
-      owner: record.owner?.id ?? null,
-      registration: record.registration,
-    },
-    200,
-  );
+    const response = c.json(
+      {
+        name,
+        namehash: hash,
+        contract: NAME_WRAPPER_V2,
+        tokenId: BigInt(hash).toString(),
+        owner: record.owner?.id ?? null,
+        registration: record.registration,
+      },
+      200,
+    );
+    response.headers.set("cache-control", `public, max-age=${CACHE_API_MAX_AGE}`);
+    response.headers.set(
+      "cache-tag",
+      cacheTagHeader(nameTag(networkName, name), tokenTag(networkName, NAME_WRAPPER_V2, hash)),
+    );
+    return response;
+  }) as never;
 });

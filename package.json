@@ -8,6 +8,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.14.7",
     "@cloudflare/workers-types": "^4.20250214.0",
+    "@vitest/coverage-istanbul": "^4.1.4",
     "typescript": "^5.7.3",
     "vitest": "^4.1.4",
     "wrangler": "^3.107.0"
@@ -39,6 +41,9 @@
       },
       "THE_GRAPH_API_KEY": {
         "description": "Optional. API key for authenticated queries against [The Graph](https://thegraph.com/studio/apikeys/). Leave blank to use public subgraph endpoints."
+      },
+      "OPENSEA_API_KEY": {
+        "description": "Optional. API key for OpenSea-hosted NFT metadata used by ERC-721 and ERC-1155 avatar/header lookups."
       },
       "RPC_API_KEY": {
         "description": "Optional. Only needed if your configured `ETH_RPC_URL` / `SEPOLIA_RPC_URL` / `HOLESKY_RPC_URL` requires a bearer token."
