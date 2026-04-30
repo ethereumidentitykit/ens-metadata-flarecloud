@@ -1,6 +1,7 @@
 import { ens_beautify, ens_normalize } from "@adraffy/ens-normalize";
 import type { Env } from "../env";
 import { HttpError } from "../lib/errors";
+import { SATOSHI_BOLD_ADVANCE_AT_20PX } from "../lib/fontMetrics";
 import { fetchImageBytes, resolveUriCached } from "./image";
 import SatoshiBold from "../fonts/Satoshi-Bold.ttf";
 
@@ -113,15 +114,13 @@ export function getFontSize(name: string): number {
 }
 
 function estimateAdvance(cp: number, segment: string): number {
-	if (segment.length === 1 && cp < 0x0300) {
-		if (segment >= "0" && segment <= "9") return 25;
-		if (segment >= "a" && segment <= "z") return 10;
-		if (segment >= "A" && segment <= "Z") return 12;
-		if (segment === ".") return 5;
-		if (segment === "-") return 7;
-		return 11;
+	if (segment.length === 1) {
+		if (cp >= 0x30 && cp <= 0x39) return 25;
+		if (cp >= 0x0400 && cp <= 0x052f) return 11;
+		const exact = SATOSHI_BOLD_ADVANCE_AT_20PX[cp];
+		if (exact !== undefined) return exact;
+		if (cp < 0x0300) return 11;
 	}
-	if (cp >= 0x0400 && cp <= 0x052f) return 11;
 	if (cp >= 0x1f000) return 20;
 	if (
 		(cp >= 0x3000 && cp <= 0x9fff) ||

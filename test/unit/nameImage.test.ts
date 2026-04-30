@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getFontSize } from "../../src/services/nameImage";
 
-const TOLERANCE = 2;
+const TOLERANCE = 1;
 
 const UPSTREAM_FONT_SIZE_CASES = [
 	["sep.eth", 32],
