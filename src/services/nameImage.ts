@@ -96,12 +96,11 @@ function textEllipsis(name: string): string {
 
 /**
  * Mirrors the reference `_getFontSize`. Reference measures on node-canvas at
- * 20px Satoshi-Bold with NotoColorEmoji fallback; we can't run node-canvas on
- * Workers, so we approximate per-grapheme. Advances tuned against the
- * reference output: ASCII ≈ 14px; CJK/Hangul/Kana ≈ 17px; emoji presentation
- * (U+1F000+) ≈ 20px; other graphemes ≈ 18px at 20px Satoshi.
+ * 20px Satoshi-Bold (with `font-variant-numeric: tabular-nums`) and a
+ * NotoColorEmoji fallback; Workers can't run node-canvas so we approximate
+ * per-grapheme. Per-class advances calibrated against the reference output.
  */
-function getFontSize(name: string): number {
+export function getFontSize(name: string): number {
 	const segmenter = new Intl.Segmenter();
 	let width = 0;
 	for (const { segment } of segmenter.segment(name)) {
@@ -114,16 +113,24 @@ function getFontSize(name: string): number {
 }
 
 function estimateAdvance(cp: number, segment: string): number {
-	if (cp < 0x0300 && segment.length === 1) return 14; // ASCII-like
-	if (cp >= 0x1f000) return 20; // emoji supplementary plane
+	if (segment.length === 1 && cp < 0x0300) {
+		if (segment >= "0" && segment <= "9") return 25;
+		if (segment >= "a" && segment <= "z") return 10;
+		if (segment >= "A" && segment <= "Z") return 12;
+		if (segment === ".") return 5;
+		if (segment === "-") return 7;
+		return 11;
+	}
+	if (cp >= 0x0400 && cp <= 0x052f) return 11;
+	if (cp >= 0x1f000) return 20;
 	if (
 		(cp >= 0x3000 && cp <= 0x9fff) ||
 		(cp >= 0xac00 && cp <= 0xd7af) ||
 		(cp >= 0xf900 && cp <= 0xfaff)
 	) {
-		return 17; // CJK ideographs, Kana, Hangul, CJK compatibility
+		return 17;
 	}
-	return 18; // arrows, math, symbols, Arabic, Hebrew, etc.
+	return 18;
 }
 
 function addSpan(str: string, splitAt: number): string {
