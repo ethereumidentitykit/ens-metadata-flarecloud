@@ -46,12 +46,6 @@
 			},
 			"OPENSEA_API_KEY": {
 				"description": "Optional. API key for OpenSea-hosted NFT metadata used by ERC-721 and ERC-1155 avatar/header lookups."
-			},
-			"RPC_API_KEY": {
-				"description": "Optional. Only needed if your configured `ETH_RPC_URL` / `SEPOLIA_RPC_URL` / `HOLESKY_RPC_URL` requires a bearer token."
-			},
-			"PINATA_GATEWAY_TOKEN": {
-				"description": "Optional. Token for a private [Pinata](https://pinata.cloud) IPFS gateway. Leave blank if you're only using public gateways."
 			}
 		}
 	}
