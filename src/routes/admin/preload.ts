@@ -126,7 +126,11 @@ async function warmItem(env: Env, base: string, item: Item): Promise<PerItem> {
         item.kind === "both" ? ["avatar", "header"] : [item.kind];
       try {
         let lastStatus = 0;
-        let ok = true;
+        let anyWarmed = false;
+        // Each requested kind is independent and best-effort: a failure on
+        // one (e.g. no avatar record) must not skip the others, and an
+        // earlier success must not be masked by a later failure. Continue
+        // through all kinds, recording per-kind errors and partial success.
         for (const k of kinds) {
           // Self-fetch the public route so its handler warms KV + R2 + the
           // (per-colo) edge cache via its own success-path cache.put. No
@@ -143,9 +147,8 @@ async function warmItem(env: Env, base: string, item: Item): Promise<PerItem> {
           );
           lastStatus = res.status;
           if (!res.ok && res.status !== 304) {
-            errors.push(`preload ${k} -> ${res.status}`);
-            ok = false;
-            break;
+            errors.push(`edge: ${k} -> ${res.status}`);
+            continue;
           }
           // The route turns a missing record / pre-stream upstream failure
           // into a 200 default image. That is NOT a real warm — the intended
@@ -155,8 +158,7 @@ async function warmItem(env: Env, base: string, item: Item): Promise<PerItem> {
             errors.push(
               `edge: ${k} served default image (record not set or pre-stream upstream failure)`,
             );
-            ok = false;
-            break;
+            continue;
           }
           // Drain so the route's waitUntil cache.put can complete. A drain
           // failure means the body aborted / hit the size guard mid-stream,
@@ -166,12 +168,12 @@ async function warmItem(env: Env, base: string, item: Item): Promise<PerItem> {
             await res.arrayBuffer();
           } catch (err) {
             errors.push(`edge: ${k} body incomplete: ${errMessage(err)}`);
-            ok = false;
-            break;
+            continue;
           }
+          anyWarmed = true;
         }
         out.status = lastStatus;
-        if (ok) out.edge_warmed = true;
+        if (anyWarmed) out.edge_warmed = true;
       } catch (err) {
         errors.push(`edge: ${errMessage(err)}`);
       }

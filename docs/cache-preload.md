@@ -120,8 +120,10 @@ both is rejected with `400`.
 - `failed` — items that recorded an `error`. The `cid` and `network`+`name`
   paths run independently, so a CID failure never blocks name warming;
   an item can be both warmed and failed (the third item above: CID failed,
-  edge warmed). When both sub-paths fail, `error` joins them with `; `,
-  each prefixed `cid:` or `edge:`.
+  edge warmed). For `kind: "both"`, avatar and header warm independently —
+  one failing neither skips the other nor masks the other's success
+  (`edge_warmed` is true if at least one warmed). When sub-paths/kinds
+  fail, `error` joins them with `; `, each prefixed `cid:` or `edge:`.
 - `ok` is `true` even with `failed > 0` — preload is best-effort;
   inspect per-item flags and retry selectively.
 - A name with **no record set**, or whose **upstream image failed before

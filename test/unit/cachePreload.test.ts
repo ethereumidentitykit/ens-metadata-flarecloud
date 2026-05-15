@@ -211,6 +211,40 @@ describe("POST /cache/preload — network+name warms the edge", () => {
     expect(body.failed).toBe(1);
   });
 
+  it("kind=both: a failed kind does not skip the other; partial success is reported", async () => {
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      urls.push(url);
+      if (url.includes("/avatar/")) {
+        // No avatar record → 200 default image (not a real warm).
+        return new Response("<svg/>", {
+          status: 200,
+          headers: { "content-type": "image/svg+xml", "x-ens-default-image": "1" },
+        });
+      }
+      return new Response("ok", { status: 200 }); // header warms fine
+    });
+
+    const res = await call(
+      req({ items: [{ network: "mainnet", name: "halfok.eth", kind: "both" }] }),
+      makeEnv(),
+    );
+    const body = (await res.json()) as any;
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+
+    // Header was still attempted despite the avatar failure (no early break).
+    expect(urls).toContain("http://preload.test/mainnet/avatar/halfok.eth");
+    expect(urls).toContain("http://preload.test/mainnet/header/halfok.eth");
+
+    const it0 = body.items[0];
+    expect(it0.edge_warmed).toBe(true); // header warmed (partial success)
+    expect(it0.error).toMatch(/avatar served default image/);
+    expect(body.warmed).toBe(1);
+    expect(body.failed).toBe(1);
+  });
+
   it("uses PUBLIC_BASE_URL when set, else the request origin", async () => {
     const urls: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
