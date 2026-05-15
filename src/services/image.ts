@@ -10,7 +10,7 @@ import {
 import { createClient, getOwner, normalizeName } from "./ens";
 import { fetchIpfs, fetchIpns, parseIpfs, parseIpns } from "./ipfs";
 import { resolveNftAvatar } from "./nftAvatar";
-import { sanitizeSvg, SANITIZER_VERSION } from "./sanitize";
+import { sanitizeSvg, sanitizeSvgStream, SANITIZER_VERSION } from "./sanitize";
 import { deleteResolved, getResolved, putResolved } from "../storage/kvCache";
 import { getHttps, getIpfs, headHttps, putHttps, putIpfs } from "../storage/r2Cache";
 import { isSvgMime, sniffMime, SVG_MIME } from "../lib/mime";
@@ -48,6 +48,71 @@ function advertisedLengthExceeds(headers: Headers, max: number): boolean {
   if (!raw) return false;
   const n = Number(raw);
   return Number.isFinite(n) && n > max;
+}
+
+// Caps a stream at `max` bytes without buffering. Applied to the raw upstream
+// body *before* sanitization and `.tee()` so the cap — and the error it raises
+// on overflow — propagates identically to both the client and R2 branches.
+function sizeLimitedStream(
+  src: ReadableStream<Uint8Array>,
+  max: number,
+): ReadableStream<Uint8Array> {
+  let seen = 0;
+  const ts = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      seen += chunk.byteLength;
+      if (seen > max) {
+        controller.error(upstream(`image exceeds size limit: >${max} bytes`));
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  });
+  // Equivalent to `src.pipeThrough(ts)`, but `pipeThrough` discards the
+  // internal pipe promise — on overflow that promise rejects and surfaces as
+  // an unhandled rejection. The consumer-facing error still reaches both tee
+  // branches via `ts.readable`; this only swallows the redundant pipe-side
+  // rejection.
+  void src.pipeTo(ts.writable).catch(() => {});
+  return ts.readable;
+}
+
+// Drains a teed branch into R2 in the background. Reads with an explicit
+// reader (never `new Response(stream)`, which leaks an unhandled rejection in
+// workerd when the stream errors) so a mid-stream size-guard error or upstream
+// abort is contained here — and a partial/aborted body is never cached.
+async function teeBranchToR2(
+  branch: ReadableStream<Uint8Array>,
+  write: (bytes: ArrayBuffer) => Promise<void>,
+): Promise<void> {
+  const reader = branch.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength) {
+        chunks.push(value);
+        total += value.byteLength;
+      }
+    }
+  } catch {
+    reader.releaseLock();
+    return; // overflow / abort — leave the cache cold rather than partial
+  }
+  reader.releaseLock();
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    await write(out.buffer as ArrayBuffer);
+  } catch {
+    /* best-effort background cache write */
+  }
 }
 
 async function readStreamUnderSizeLimit(
@@ -203,18 +268,43 @@ export async function fetchImageBytes(
         );
       }
       const headerType = res.headers.get("content-type");
-      const rawBytes = await readResponseBytes(
-        res,
-        !headerType || !res.headers.has("content-length"),
-      );
-      const rawType = headerType ?? sniffMime(new Uint8Array(rawBytes));
-      const image = await sanitizeIfSvg(rawBytes, rawType);
-      const stored = image.body as ArrayBuffer;
-      const isIpfsSvg = isSvgMime(image.contentType);
+      const hasDeclaredLength = res.headers.has("content-length");
+
+      // Unknown content-type or no declared length: must buffer to mime-sniff.
+      if (!headerType || !hasDeclaredLength) {
+        const rawBytes = await readResponseBytes(res, true);
+        const rawType = headerType ?? sniffMime(new Uint8Array(rawBytes));
+        const image = await sanitizeIfSvg(rawBytes, rawType);
+        const stored = image.body as ArrayBuffer;
+        const isIpfsSvg = isSvgMime(image.contentType);
+        ctx.waitUntil(
+          putIpfs(env, ref, stored, image.contentType, isIpfsSvg, isIpfsSvg ? SANITIZER_VERSION : undefined),
+        );
+        return { ...image, etag };
+      }
+
+      // Streaming path: known content-type + declared length. Stream to the
+      // client immediately while the R2 write drains the teed branch in the
+      // background — first byte no longer waits on full download + sanitize.
+      if (!res.body) throw upstream("ipfs response has no body");
+      const limited = sizeLimitedStream(res.body, MAX_IMAGE_BYTES);
+      const isIpfsSvg = isSvgMime(headerType);
+      const outStream = isIpfsSvg ? sanitizeSvgStream(limited) : limited;
+      const outType = isIpfsSvg ? SVG_MIME : headerType;
+      const [toClient, toR2] = outStream.tee();
       ctx.waitUntil(
-        putIpfs(env, ref, stored, image.contentType, isIpfsSvg, isIpfsSvg ? SANITIZER_VERSION : undefined),
+        teeBranchToR2(toR2, (bytes) =>
+          putIpfs(
+            env,
+            ref,
+            bytes,
+            outType,
+            isIpfsSvg,
+            isIpfsSvg ? SANITIZER_VERSION : undefined,
+          ),
+        ),
       );
-      return { ...image, etag };
+      return { body: toClient, contentType: outType, etag };
     }
 
     case "ipns": {
@@ -227,12 +317,22 @@ export async function fetchImageBytes(
         );
       }
       const headerType = res.headers.get("content-type");
-      const rawBytes = await readResponseBytes(
-        res,
-        !headerType || !res.headers.has("content-length"),
-      );
-      const rawType = headerType ?? sniffMime(new Uint8Array(rawBytes));
-      return sanitizeIfSvg(rawBytes, rawType);
+      const hasDeclaredLength = res.headers.has("content-length");
+
+      // IPNS is mutable and deliberately uncached, so there is no R2 tee — but
+      // we can still stream + sanitize to the client instead of buffering.
+      if (!headerType || !hasDeclaredLength) {
+        const rawBytes = await readResponseBytes(res, true);
+        const rawType = headerType ?? sniffMime(new Uint8Array(rawBytes));
+        return sanitizeIfSvg(rawBytes, rawType);
+      }
+      if (!res.body) throw upstream("ipns response has no body");
+      const limited = sizeLimitedStream(res.body, MAX_IMAGE_BYTES);
+      const isSvg = isSvgMime(headerType);
+      return {
+        body: isSvg ? sanitizeSvgStream(limited) : limited,
+        contentType: isSvg ? SVG_MIME : headerType,
+      };
     }
 
     case "https": {
@@ -284,28 +384,54 @@ export async function fetchImageBytes(
       const headerType = res.headers.get("content-type");
       const etag = res.headers.get("etag") ?? undefined;
       const lastModified = res.headers.get("last-modified") ?? undefined;
-      const rawBytes = await readResponseBytes(
-        res,
-        !headerType || !res.headers.has("content-length"),
-      );
-      const rawType = headerType ?? sniffMime(new Uint8Array(rawBytes));
-      const image = await sanitizeIfSvg(rawBytes, rawType);
-      const stored = image.body as ArrayBuffer;
-      const isSvg = isSvgMime(image.contentType);
+      const hasDeclaredLength = res.headers.has("content-length");
+
+      // Unknown content-type or no declared length: must buffer to mime-sniff.
+      if (!headerType || !hasDeclaredLength) {
+        const rawBytes = await readResponseBytes(res, true);
+        const rawType = headerType ?? sniffMime(new Uint8Array(rawBytes));
+        const image = await sanitizeIfSvg(rawBytes, rawType);
+        const stored = image.body as ArrayBuffer;
+        const isSvg = isSvgMime(image.contentType);
+        ctx.waitUntil(
+          putHttps(
+            env,
+            classified.url,
+            stored,
+            image.contentType,
+            etag,
+            lastModified,
+            isSvg,
+            isSvg ? SANITIZER_VERSION : undefined,
+          ),
+        );
+        const servedEtag = isSvg && etag ? svgVersionedEtag(etag) : etag;
+        return { ...image, etag: servedEtag };
+      }
+
+      // Streaming path: known content-type + declared length.
+      if (!res.body) throw upstream("https response has no body");
+      const limited = sizeLimitedStream(res.body, MAX_IMAGE_BYTES);
+      const isSvg = isSvgMime(headerType);
+      const outStream = isSvg ? sanitizeSvgStream(limited) : limited;
+      const outType = isSvg ? SVG_MIME : headerType;
+      const [toClient, toR2] = outStream.tee();
       ctx.waitUntil(
-        putHttps(
-          env,
-          classified.url,
-          stored,
-          image.contentType,
-          etag,
-          lastModified,
-          isSvg,
-          isSvg ? SANITIZER_VERSION : undefined,
+        teeBranchToR2(toR2, (bytes) =>
+          putHttps(
+            env,
+            classified.url,
+            bytes,
+            outType,
+            etag,
+            lastModified,
+            isSvg,
+            isSvg ? SANITIZER_VERSION : undefined,
+          ),
         ),
       );
       const servedEtag = isSvg && etag ? svgVersionedEtag(etag) : etag;
-      return { ...image, etag: servedEtag };
+      return { body: toClient, contentType: outType, etag: servedEtag };
     }
 
     case "eip155": {
