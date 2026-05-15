@@ -11,6 +11,7 @@
 // Each call emits ONE single-line JSON object via console[level], which the
 // Workers Logs UI parses into structured, queryable fields.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { HttpError } from "./errors";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -183,10 +184,35 @@ export function setDefaultLevel(level: LogLevel): void {
   defaultMinRank = RANK[level];
 }
 
-// Default logger for code with no request context (waitUntil tasks, the
-// service layer). Its level follows setDefaultLevel(), so LOG_LEVEL=debug
-// actually enables the cache-seam / gateway diagnostics routed through it.
-export const log: Logger = makeLogger({}, () => defaultMinRank);
+// Default logger for code that runs outside a request scope (module init,
+// stray tasks). Its level follows setDefaultLevel() so LOG_LEVEL=debug works.
+const defaultLogger: Logger = makeLogger({}, () => defaultMinRank);
+
+// Propagates the per-request logger (reqId/colo, request LOG_LEVEL) to all
+// code run within it — including async continuations and waitUntil tasks
+// created during the request — without threading a Logger through every
+// service signature. AsyncLocalStorage is the Workers-native way to do this
+// (nodejs_compat) and isolates concurrent requests in the same isolate.
+const requestLoggerStore = new AsyncLocalStorage<Logger>();
+
+export function runWithLogger<T>(logger: Logger, fn: () => T): T {
+  return requestLoggerStore.run(logger, fn);
+}
+
+// The shared logger every module imports. Inside a request it transparently
+// resolves to that request's logger; otherwise the default logger.
+export const log: Logger = {
+  debug: (event, fields) =>
+    (requestLoggerStore.getStore() ?? defaultLogger).debug(event, fields),
+  info: (event, fields) =>
+    (requestLoggerStore.getStore() ?? defaultLogger).info(event, fields),
+  warn: (event, fields) =>
+    (requestLoggerStore.getStore() ?? defaultLogger).warn(event, fields),
+  error: (event, fields) =>
+    (requestLoggerStore.getStore() ?? defaultLogger).error(event, fields),
+  child: (extra) =>
+    (requestLoggerStore.getStore() ?? defaultLogger).child(extra),
+};
 
 // Make `c.get("log")` / `c.set("log", …)` typed in every Hono context without
 // threading a Variables generic through each route module (which would force

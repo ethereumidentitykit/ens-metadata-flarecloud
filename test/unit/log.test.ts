@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createLogger, log, parseLevel, setDefaultLevel } from "../../src/lib/log";
+import {
+  createLogger,
+  log,
+  parseLevel,
+  runWithLogger,
+  setDefaultLevel,
+} from "../../src/lib/log";
 import { notFound, upstream } from "../../src/lib/errors";
 
 type Spies = Record<"debug" | "info" | "warn" | "error", ReturnType<typeof vi.spyOn>>;
@@ -198,5 +204,60 @@ describe("createLogger", () => {
     log.child({ a: 1 }).debug("child-seam");
     expect(lastJson(s.debug).event).toBe("child-seam");
     expect(lastJson(s.debug).a).toBe(1);
+  });
+});
+
+describe("runWithLogger (request scope)", () => {
+  it("routes module log.* to the scoped logger", () => {
+    const s = spyConsole();
+    runWithLogger(createLogger({ reqId: "abc" }), () => {
+      log.info("scoped");
+    });
+    const p = lastJson(s.info);
+    expect(p.event).toBe("scoped");
+    expect(p.reqId).toBe("abc");
+  });
+
+  it("uses the default logger outside any scope", () => {
+    const s = spyConsole();
+    log.info("unscoped");
+    const p = lastJson(s.info);
+    expect(p.event).toBe("unscoped");
+    expect(p.reqId).toBeUndefined();
+  });
+
+  it("isolates sequential scopes", () => {
+    const s = spyConsole();
+    runWithLogger(createLogger({ reqId: "A" }), () => log.info("ev"));
+    runWithLogger(createLogger({ reqId: "B" }), () => log.info("ev"));
+    const calls = (s.info.mock.calls as unknown[][]).map(
+      (c) => JSON.parse(c[0] as string) as { reqId?: string },
+    );
+    expect(calls.map((x) => x.reqId)).toEqual(["A", "B"]);
+  });
+
+  it("propagates through async continuations (waitUntil-style tasks)", async () => {
+    const s = spyConsole();
+    let task: Promise<void> | undefined;
+    await runWithLogger(createLogger({ reqId: "R" }), async () => {
+      // An async fn invoked within the scope, like
+      // ctx.waitUntil((async () => { … })()) — resolves after the scope ends.
+      task = (async () => {
+        await Promise.resolve();
+        log.warn("deferred");
+      })();
+    });
+    await task;
+    expect(lastJson(s.warn).reqId).toBe("R");
+  });
+
+  it("the scoped logger keeps its own level", () => {
+    const s = spyConsole();
+    runWithLogger(createLogger({ reqId: "X" }, "warn"), () => {
+      log.debug("nope");
+      log.warn("yep");
+    });
+    expect(s.debug).not.toHaveBeenCalled();
+    expect(lastJson(s.warn).reqId).toBe("X");
   });
 });

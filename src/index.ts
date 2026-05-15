@@ -4,7 +4,13 @@ import { Scalar } from "@scalar/hono-api-reference";
 
 import type { Env } from "./env";
 import { HttpError } from "./lib/errors";
-import { createLogger, log, parseLevel, setDefaultLevel } from "./lib/log";
+import {
+  createLogger,
+  log,
+  parseLevel,
+  runWithLogger,
+  setDefaultLevel,
+} from "./lib/log";
 import { createLlmsText } from "./lib/llms";
 import { scalarTheme } from "./lib/scalarTheme";
 import { registerRoutes } from "./routes";
@@ -37,17 +43,22 @@ app.use("*", async (c, next) => {
   setDefaultLevel(level);
   const reqLog = createLogger({ reqId, ...(colo ? { colo } : {}) }, level);
   c.set("log", reqLog);
-  const start = Date.now();
-  await next();
-  const network = c.req.param("network");
-  const name = c.req.param("name");
-  reqLog.info("request_complete", {
-    method: c.req.method,
-    path: c.req.path,
-    status: c.res.status,
-    durationMs: Date.now() - start,
-    ...(network ? { network } : {}),
-    ...(name ? { name } : {}),
+  // Run the request inside the ALS scope so every `log.*` in the service
+  // layer — and waitUntil tasks created during the request — resolves to
+  // reqLog (reqId/colo) without threading a Logger through signatures.
+  await runWithLogger(reqLog, async () => {
+    const start = Date.now();
+    await next();
+    const network = c.req.param("network");
+    const name = c.req.param("name");
+    reqLog.info("request_complete", {
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      durationMs: Date.now() - start,
+      ...(network ? { network } : {}),
+      ...(name ? { name } : {}),
+    });
   });
 });
 
