@@ -111,14 +111,17 @@ both is rejected with `400`.
   "items": [
     { "cid": "Qm…", "r2_warmed": true, "edge_warmed": false, "bytes": 12345 },
     { "network": "mainnet", "name": "foo.eth", "kind": "both", "r2_warmed": false, "edge_warmed": true, "status": 200 },
-    { "cid": "bad", "r2_warmed": false, "edge_warmed": false, "error": "invalid ipfs CID/URI: bad" }
+    { "cid": "bad", "network": "mainnet", "name": "baz.eth", "r2_warmed": false, "edge_warmed": true, "status": 200, "error": "cid: invalid ipfs CID/URI: bad" }
   ]
 }
 ```
 
 - `warmed` — items where at least one of R2/edge was warmed.
-- `failed` — items that recorded an `error`. An item can be both warmed
-  and failed (e.g. CID warmed but the name self-fetch failed).
+- `failed` — items that recorded an `error`. The `cid` and `network`+`name`
+  paths run independently, so a CID failure never blocks name warming;
+  an item can be both warmed and failed (the third item above: CID failed,
+  edge warmed). When both sub-paths fail, `error` joins them with `; `,
+  each prefixed `cid:` or `edge:`.
 - `ok` is `true` even with `failed > 0` — preload is best-effort;
   inspect per-item flags and retry selectively.
 
