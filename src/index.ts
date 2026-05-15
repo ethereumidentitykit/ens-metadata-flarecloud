@@ -7,11 +7,7 @@ import { HttpError } from "./lib/errors";
 import { createLogger, log, parseLevel } from "./lib/log";
 import { createLlmsText } from "./lib/llms";
 import { scalarTheme } from "./lib/scalarTheme";
-import { avatarRoutes, headerRoutes } from "./routes/images";
-import { cacheInvalidateRoutes } from "./routes/cacheInvalidate";
-import { metadataRoutes } from "./routes/metadata";
-import { nameImageRoutes } from "./routes/nameImage";
-import { queryNFTRoutes } from "./routes/queryNFT";
+import { registerRoutes } from "./routes";
 
 const app = new OpenAPIHono<{ Bindings: Env }>();
 const STATIC_CACHE_CONTROL = "public, max-age=3600";
@@ -25,11 +21,6 @@ const openApiConfig = {
       "ENS metadata service on Cloudflare Workers. Serves JSON metadata, avatar, and header records.",
   },
 } as const;
-
-app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
-  type: "http",
-  scheme: "bearer",
-});
 
 app.use("*", cors());
 
@@ -59,12 +50,7 @@ app.use("*", async (c, next) => {
   });
 });
 
-app.route("/", avatarRoutes);
-app.route("/", headerRoutes);
-app.route("/", queryNFTRoutes);
-app.route("/", nameImageRoutes);
-app.route("/", metadataRoutes);
-app.route("/", cacheInvalidateRoutes);
+registerRoutes(app);
 
 const openApiDocument = app.getOpenAPI31Document(openApiConfig);
 const llmsText = createLlmsText(openApiDocument);
