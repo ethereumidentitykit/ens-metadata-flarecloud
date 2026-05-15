@@ -259,6 +259,37 @@ describe("POST /cache/preload — network+name warms the edge", () => {
     expect(body.failed).toBe(1);
   });
 
+  it("a 200 self-fetch whose body fails to drain is an edge error, not warmed", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("/avatar/")) {
+        return new Response(
+          new ReadableStream({
+            start(ctrl) {
+              ctrl.error(new Error("body aborted"));
+            },
+          }),
+          { status: 200, headers: { "content-type": "image/png" } },
+        );
+      }
+      return new Response("ok", { status: 200 });
+    });
+
+    const res = await call(
+      req({ items: [{ network: "mainnet", name: "drainfail.eth", kind: "avatar" }] }),
+      makeEnv(),
+    );
+    const body = (await res.json()) as any;
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+
+    const it0 = body.items[0];
+    expect(it0.edge_warmed).toBe(false);
+    expect(it0.error).toMatch(/edge:/);
+    expect(body.warmed).toBe(0);
+    expect(body.failed).toBe(1);
+  });
+
   it("mixed batch: some warmed, some failed, ok stays true", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as Request).url;

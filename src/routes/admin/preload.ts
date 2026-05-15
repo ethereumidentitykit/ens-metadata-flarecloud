@@ -138,11 +138,20 @@ async function warmItem(env: Env, base: string, item: Item): Promise<PerItem> {
               signal: AbortSignal.timeout(SELF_FETCH_TIMEOUT_MS),
             },
           );
-          // Drain so the route's waitUntil cache.put can complete.
-          await res.arrayBuffer().catch(() => {});
           lastStatus = res.status;
           if (!res.ok && res.status !== 304) {
             errors.push(`preload ${k} -> ${res.status}`);
+            ok = false;
+            break;
+          }
+          // Drain so the route's waitUntil cache.put can complete. A drain
+          // failure means the body aborted / hit the size guard mid-stream,
+          // so the edge entry did NOT actually warm — surface it rather than
+          // swallow it and falsely report the item hot.
+          try {
+            await res.arrayBuffer();
+          } catch (err) {
+            errors.push(`edge: ${k} body incomplete: ${errMessage(err)}`);
             ok = false;
             break;
           }
