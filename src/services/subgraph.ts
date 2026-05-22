@@ -51,9 +51,6 @@ const DOMAIN_BY_NAMEHASH = gql`
 `
 
 function resolveSubgraphUrl(url: string, env: Env): string {
-	// ENS Node subgraph does not require an API key
-	if (url.includes('ensnode')) return url
-
 	if (!url.includes('{API_KEY}')) return url
 	if (!env.THE_GRAPH_API_KEY) {
 		throw new HttpError(
