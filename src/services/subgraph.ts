@@ -6,17 +6,17 @@ import { ETH_NAMEHASH } from "../constants";
 import { HttpError } from "../lib/errors";
 
 export type DomainRecord = {
-  id: string;
-  name: string | null;
-  labelName: string | null;
-  labelhash: string;
-  createdAt: string;
-  registration: {
-    registrationDate: string;
-    expiryDate: string;
-  } | null;
-  owner: { id: string } | null;
-};
+	id: string
+	name: string | null
+	labelName: string | null
+	labelhash: string
+	createdAt: string
+	registration: {
+		registrationDate: string
+		expiryDate: string
+	} | null
+	owner: { id: string } | null
+}
 
 const DOMAIN_BY_LABELHASH = gql`
   query DomainByLabelhash($labelhash: String!) {
@@ -30,21 +30,26 @@ const DOMAIN_BY_LABELHASH = gql`
       owner { id }
     }
   }
-`;
+`
 
 const DOMAIN_BY_NAMEHASH = gql`
-  query DomainByNamehash($id: ID!) {
-    domain(id: $id) {
-      id
-      name
-      labelName
-      labelhash
-      createdAt
-      registration { registrationDate expiryDate }
-      owner { id }
-    }
-  }
-`;
+	query DomainByNamehash($id: ID!) {
+		domain(id: $id) {
+			id
+			name
+			labelName
+			labelhash
+			createdAt
+			registration {
+				registrationDate
+				expiryDate
+			}
+			owner {
+				id
+			}
+		}
+	}
+`
 
 // THE_GRAPH_API_KEY may hold one or more comma-separated keys. Requests are
 // spread across them (random pick) and, on a key-fixable failure, retried on
@@ -126,9 +131,9 @@ async function requestWithRotation<T>(
 }
 
 export async function queryDomainByLabelhash(
-  network: NetworkConfig,
-  env: Env,
-  labelhash: `0x${string}`,
+	network: NetworkConfig,
+	env: Env,
+	labelhash: `0x${string}`,
 ): Promise<DomainRecord | null> {
   const data = await requestWithRotation<{ domains: DomainRecord[] }>(
     network,
@@ -140,9 +145,9 @@ export async function queryDomainByLabelhash(
 }
 
 export async function queryDomainByNamehash(
-  network: NetworkConfig,
-  env: Env,
-  namehash: `0x${string}`,
+	network: NetworkConfig,
+	env: Env,
+	namehash: `0x${string}`,
 ): Promise<DomainRecord | null> {
   const data = await requestWithRotation<{ domain: DomainRecord | null }>(
     network,
