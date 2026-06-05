@@ -12,9 +12,9 @@ ETH_RPC_URL = "https://eth.drpc.org"
 SEPOLIA_RPC_URL = "https://sepolia.drpc.org"
 HOLESKY_RPC_URL = "https://holesky.drpc.org"
 IPFS_GATEWAYS = "https://apac.orbitor.dev,https://eu.orbitor.dev,https://latam.orbitor.dev,https://ipfs.filebase.io,https://dweb.link,https://4everland.io,https://ipfs.io"
-SUBGRAPH_URL_MAINNET = "https://gateway.thegraph.com/api/{API_KEY}/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH"
-SUBGRAPH_URL_SEPOLIA = "https://api.studio.thegraph.com/query/49574/enssepolia/version/latest"
-SUBGRAPH_URL_HOLESKY = "https://api.studio.thegraph.com/query/49574/ensholesky/version/latest"
+ENSNODE_URL_MAINNET = "https://api.alpha.ensnode.io"
+ENSNODE_URL_SEPOLIA = "https://api.alpha-sepolia.ensnode.io"
+ENSNODE_URL_HOLESKY = ""
 
 [[r2_buckets]]
 binding = "IPFS_CACHE"

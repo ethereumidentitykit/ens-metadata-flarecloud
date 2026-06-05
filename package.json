@@ -41,8 +41,14 @@
 			"RESOLVER_CACHE": {
 				"description": "KV namespace that caches resolved ENS avatar/header URIs for 15 minutes. Auto-provisioned on deploy."
 			},
-			"THE_GRAPH_API_KEY": {
-				"description": "Optional. API key for authenticated queries against [The Graph](https://thegraph.com/studio/apikeys/). Leave blank to use public subgraph endpoints."
+			"ENSNODE_URL_MAINNET": {
+				"description": "ENSNode base URL for mainnet indexing. Defaults to https://api.alpha.ensnode.io in wrangler.toml."
+			},
+			"ENSNODE_URL_SEPOLIA": {
+				"description": "ENSNode base URL for Sepolia indexing. Defaults to https://api.alpha-sepolia.ensnode.io in wrangler.toml."
+			},
+			"ENSNODE_URL_HOLESKY": {
+				"description": "ENSNode base URL for Holesky. No hosted instance exists today; leave blank (holesky queries fail fast)."
 			},
 			"OPENSEA_API_KEY": {
 				"description": "Optional. API key for OpenSea-hosted NFT metadata used by ERC-721 and ERC-1155 avatar/header lookups."

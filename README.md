@@ -25,7 +25,21 @@ A subset of [`ensdomains/ens-metadata-service`](https://github.com/ensdomains/en
 | `GET /openapi.json`                             |    ✗     |            ✓            |
 | `GET /llms.txt`                                 |    ✗     |            ✓            |
 
-`network` is one of `mainnet`, `sepolia`, `holesky`. `contract` is the BaseRegistrar (v1) or NameWrapper (v2) address.
+`network` is one of `mainnet`, `sepolia`, or `holesky`. `contract` is the BaseRegistrar (v1) or NameWrapper (v2) address.
+
+**Holesky:** indexed domain lookups require [ENSNode](https://ensnode.io). There is no hosted ENSNode instance for Holesky today — metadata and `/queryNFT` requests on `holesky` return `503` with a descriptive error. Avatar/header resolution via RPC still works if you configure `HOLESKY_RPC_URL`.
+
+## Indexing backend
+
+Domain data is fetched from [ENSNode](https://ensnode.io) instead of The Graph:
+
+- **NameWrapper / name lookups** — [Omnigraph API](https://ensnode.io/docs/integrate/omnigraph) (`/api/omnigraph`)
+- **Base Registrar v1 (labelhash)** — ENSNode [subgraph-compatible endpoint](https://ensnode.io/docs/integrate/ens-subgraph/backwards-compatibility) (`/subgraph`)
+- **Avatar/header resolution** — viem RPC (`getEnsText` / `getEnsAddress`), unchanged
+
+See [Keep ENS apps working](https://ensnode.io/docs/integrate/why-ensnode/keep-ens-working) and [hosted instances](https://ensnode.io/docs/hosted-instances) for more context.
+
+Metadata `version` field: `1` = Base Registrar, `2` = NameWrapper, `3` = native ENSv2 domain.
 
 ## One-click deploy
 
@@ -33,12 +47,11 @@ Click the **Deploy to Cloudflare** button above. Cloudflare forks this repo into
 
 The setup page will prompt for these optional secrets — leave them blank unless you need them:
 
-- `THE_GRAPH_API_KEY` — authenticated Graph queries
 - `OPENSEA_API_KEY` — OpenSea-hosted NFT metadata used by ERC-721 and ERC-1155 avatar/header lookups
 - `RPC_API_KEY` — if your configured RPC URL needs auth
 - `PINATA_GATEWAY_TOKEN` — for Pinata IPFS gateway
 
-Public endpoints (`ETH_RPC_URL`, `SUBGRAPH_URL_*`, `IPFS_GATEWAYS`) come from `[vars]` in `wrangler.toml` and can be overridden on the same setup page.
+Public endpoints (`ETH_RPC_URL`, `ENSNODE_URL_*`, `IPFS_GATEWAYS`) come from `[vars]` in `wrangler.toml` and can be overridden on the same setup page.
 
 ## Local development
 
@@ -59,7 +72,6 @@ Open http://localhost:8787 for the Scalar docs. Miniflare simulates R2 and KV lo
 If you'd rather clone and deploy from the CLI instead of using the button, log in with Wrangler, add any optional secrets you need, then deploy. `npm run deploy` will create or reuse the KV namespace and R2 bucket for the authenticated account before publishing.
 
 ```sh
-npx wrangler secret put THE_GRAPH_API_KEY      # optional
 npx wrangler secret put OPENSEA_API_KEY        # optional
 npx wrangler secret put RPC_API_KEY            # optional
 npx wrangler secret put PINATA_GATEWAY_TOKEN   # optional
@@ -73,7 +85,9 @@ Public vars live in `wrangler.toml` under `[vars]` and can be edited freely:
 
 - `ETH_RPC_URL`, `SEPOLIA_RPC_URL`, `HOLESKY_RPC_URL`
 - `IPFS_GATEWAYS` (comma-separated, primary first; defaults to w3s.link, nftstorage.link, ipfs.io)
-- `SUBGRAPH_URL_MAINNET`, `SUBGRAPH_URL_SEPOLIA`, `SUBGRAPH_URL_HOLESKY`
+- `ENSNODE_URL_MAINNET` — defaults to `https://api.alpha.ensnode.io`
+- `ENSNODE_URL_SEPOLIA` — defaults to `https://api.alpha-sepolia.ensnode.io`
+- `ENSNODE_URL_HOLESKY` — leave empty (no hosted instance)
 
 Cloudflare retired its public IPFS gateway in 2024. Pinata or a self-hosted Kubo node is recommended for production.
 

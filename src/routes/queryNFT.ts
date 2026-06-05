@@ -3,7 +3,7 @@ import { namehash } from "viem";
 import type { Env } from "../env";
 import { getNetwork } from "../lib/networks";
 import { badRequest, notFound } from "../lib/errors";
-import { queryDomainByNamehash } from "../services/subgraph";
+import { queryDomainByName } from "../services/ensnode";
 import { normalizeName } from "../services/ens";
 import { CACHE_API_MAX_AGE, NAME_WRAPPER_V2 } from "../constants";
 import { cacheTagHeader, nameTag, tokenTag } from "../lib/cacheTags";
@@ -45,7 +45,7 @@ queryNFTRoutes.openapi(route, async (c) => {
   const name = normalizeName(rawName);
   const hash = namehash(name);
   return respondFromCache(caches.default, c.req.raw, c.executionCtx, async () => {
-    const record = await queryDomainByNamehash(network, c.env, hash);
+    const record = await queryDomainByName(network, c.env, name);
     if (!record) throw notFound(`domain not found: ${name}`);
 
     const response = c.json(
