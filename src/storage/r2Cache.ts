@@ -10,7 +10,7 @@ export type CachedImage = {
   sanitized: boolean;
   sanitizerVersion?: string;
   // Only set on `generated/*` entries. Lets us emit a name Cache-Tag on
-  // cache-hit responses without another subgraph roundtrip.
+  // cache-hit responses without another ENSNode roundtrip.
   name?: string;
 };
 

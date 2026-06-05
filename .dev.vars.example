@@ -1,4 +1,4 @@
-THE_GRAPH_API_KEY=
+# Optional secrets for local development (wrangler dev reads .dev.vars)
 OPENSEA_API_KEY=
 RPC_API_KEY=
 PINATA_GATEWAY_TOKEN=

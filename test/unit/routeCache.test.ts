@@ -20,35 +20,73 @@ const testEnv = {
   ETH_RPC_URL: "https://rpc.example/mainnet",
   SEPOLIA_RPC_URL: "https://rpc.example/sepolia",
   HOLESKY_RPC_URL: "https://rpc.example/holesky",
-  SUBGRAPH_URL_MAINNET: "https://subgraph.example/mainnet",
-  SUBGRAPH_URL_SEPOLIA: "https://subgraph.example/sepolia",
-  SUBGRAPH_URL_HOLESKY: "https://subgraph.example/holesky",
+  ENSNODE_URL_MAINNET: "https://ensnode.example",
+  ENSNODE_URL_SEPOLIA: "https://ensnode.example/sepolia",
+  ENSNODE_URL_HOLESKY: "",
 } as Env;
 
 const CACHE_CONTROL = `public, max-age=${CACHE_API_MAX_AGE}`;
 
-function domainRecord(name: string) {
+function omnigraphDomain(name: string) {
   const label = name.split(".")[0]!;
   return {
-    id: namehash(name),
-    name,
-    labelName: label,
-    labelhash: namehash(label),
-    createdAt: "1",
-    registration: {
-      registrationDate: "2",
-      expiryDate: "3",
+    __typename: "ENSv1Domain",
+    canonical: {
+      node: namehash(name),
+      name: { interpreted: name },
     },
-    owner: { id: "0x0000000000000000000000000000000000000001" },
+    label: {
+      interpreted: label,
+      hash: namehash(label),
+    },
+    owner: { address: "0x0000000000000000000000000000000000000001" },
+    registration: {
+      expiry: "3",
+      event: { timestamp: "2" },
+    },
+    events: [{ timestamp: "1" }],
   };
 }
 
-function mockSubgraphDomain(name: string) {
-  return vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(JSON.stringify({ data: { domain: domainRecord(name) } }), {
-      headers: { "content-type": "application/json" },
-    }),
-  );
+function mockEnsnodeDomain(name: string) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+
+    if (url.includes("/api/omnigraph")) {
+      return new Response(JSON.stringify({ data: { domain: omnigraphDomain(name) } }), {
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (url.includes("/subgraph")) {
+      const label = name.split(".")[0]!;
+      return new Response(
+        JSON.stringify({
+          data: {
+            domains: [
+              {
+                id: namehash(name),
+                name,
+                labelName: label,
+                labelhash: namehash(label),
+                createdAt: "1",
+                registration: { registrationDate: "2", expiryDate: "3" },
+                owner: { id: "0x0000000000000000000000000000000000000001" },
+              },
+            ],
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
+
+    return new Response("not found", { status: 404 });
+  });
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -70,7 +108,7 @@ describe("route cache headers", () => {
       `https://example.com/queryNFT?name=${name}&network=mainnet`,
     );
     await caches.default.delete(request);
-    const fetchMock = mockSubgraphDomain(name);
+    const fetchMock = mockEnsnodeDomain(name);
 
     const ctx = createExecutionContext();
     const response = await queryNFTRoutes.fetch(request, testEnv, ctx);
@@ -101,7 +139,7 @@ describe("route cache headers", () => {
       `https://example.com/mainnet/${NAME_WRAPPER_V2}/${tokenId}`,
     );
     await caches.default.delete(request);
-    mockSubgraphDomain(name);
+    mockEnsnodeDomain(name);
 
     const ctx = createExecutionContext();
     const response = await metadataRoutes.fetch(request, testEnv, ctx);

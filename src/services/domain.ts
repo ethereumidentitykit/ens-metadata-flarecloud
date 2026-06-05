@@ -7,7 +7,7 @@ import {
   queryDomainByLabelhash,
   queryDomainByNamehash,
   type DomainRecord,
-} from "./subgraph";
+} from "./ensnode";
 
 export type ContractKind = "v1" | "v2";
 

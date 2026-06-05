@@ -33,3 +33,6 @@ export const TOKEN_CONTRACTS = [
 
 export const ETH_NAMEHASH =
   "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae" as const;
+
+export const ETH_REGISTRY_V1 =
+  "0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e" as const;

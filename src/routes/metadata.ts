@@ -110,7 +110,8 @@ metadataRoutes.openapi(route, async (c) => {
         attributes,
         name_length: record.labelName?.length ?? null,
         url: name ? `https://app.ens.domains/name/${name}` : null,
-        version: kind === "v1" ? 1 : 2,
+        version:
+          record.protocolVersion === "ENSv2" ? 3 : kind === "v1" ? 1 : 2,
         background_image: backgroundImage,
         image,
         image_url: image,

@@ -23,9 +23,9 @@ export default defineConfig({
           HOLESKY_RPC_URL: "https://holesky.drpc.org",
           IPFS_GATEWAYS:
             "https://w3s.link,https://nftstorage.link,https://ipfs.io",
-          SUBGRAPH_URL_MAINNET: "https://example.invalid/mainnet",
-          SUBGRAPH_URL_SEPOLIA: "https://example.invalid/sepolia",
-          SUBGRAPH_URL_HOLESKY: "https://example.invalid/holesky",
+          ENSNODE_URL_MAINNET: "https://example.invalid/mainnet",
+          ENSNODE_URL_SEPOLIA: "https://example.invalid/sepolia",
+          ENSNODE_URL_HOLESKY: "",
         },
       },
     }),

@@ -7,7 +7,7 @@ export type NetworkConfig = {
   name: NetworkName;
   chain: Chain;
   rpcUrl: string;
-  subgraphUrl: string;
+  ensnodeUrl: string;
 };
 
 export function getNetwork(env: Env, name: string): NetworkConfig | null {
@@ -17,21 +17,21 @@ export function getNetwork(env: Env, name: string): NetworkConfig | null {
         name: "mainnet",
         chain: mainnet,
         rpcUrl: env.ETH_RPC_URL,
-        subgraphUrl: env.SUBGRAPH_URL_MAINNET,
+        ensnodeUrl: env.ENSNODE_URL_MAINNET,
       };
     case "sepolia":
       return {
         name: "sepolia",
         chain: sepolia,
         rpcUrl: env.SEPOLIA_RPC_URL,
-        subgraphUrl: env.SUBGRAPH_URL_SEPOLIA,
+        ensnodeUrl: env.ENSNODE_URL_SEPOLIA,
       };
     case "holesky":
       return {
         name: "holesky",
         chain: holesky,
         rpcUrl: env.HOLESKY_RPC_URL,
-        subgraphUrl: env.SUBGRAPH_URL_HOLESKY,
+        ensnodeUrl: env.ENSNODE_URL_HOLESKY,
       };
     default:
       return null;
