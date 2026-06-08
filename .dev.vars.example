@@ -2,3 +2,6 @@
 OPENSEA_API_KEY=
 RPC_API_KEY=
 PINATA_GATEWAY_TOKEN=
+
+# Optional ENSv2 EthRegistry for namehash lookups on sepolia-v2, etc.
+# ENS_REGISTRY_V2_SEPOLIA=0x64c81210d0e580cfc7746f3fb910bf0e8f6378e1

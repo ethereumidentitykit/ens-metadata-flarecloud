@@ -3,9 +3,10 @@ import { namehash } from "viem";
 import type { Env } from "../env";
 import { getNetwork } from "../lib/networks";
 import { badRequest, notFound } from "../lib/errors";
-import { queryDomainByName } from "../services/ensnode";
+import { queryDomainByName, resolveNftIdentifiers } from "../services/ensnode";
+import { tokenIdToHex } from "../services/domain";
 import { normalizeName } from "../services/ens";
-import { CACHE_API_MAX_AGE, NAME_WRAPPER_V2 } from "../constants";
+import { CACHE_API_MAX_AGE } from "../constants";
 import { cacheTagHeader, nameTag, tokenTag } from "../lib/cacheTags";
 import { respondFromCache } from "../lib/responseCache";
 import { ErrorSchema, QueryNFTSchema } from "../schemas";
@@ -48,12 +49,14 @@ queryNFTRoutes.openapi(route, async (c) => {
     const record = await queryDomainByName(network, c.env, name);
     if (!record) throw notFound(`domain not found: ${name}`);
 
+    const { contract, tokenId } = resolveNftIdentifiers(record, hash);
+
     const response = c.json(
       {
         name,
         namehash: hash,
-        contract: NAME_WRAPPER_V2,
-        tokenId: BigInt(hash).toString(),
+        contract,
+        tokenId,
         owner: record.owner?.id ?? null,
         registration: record.registration,
       },
@@ -62,7 +65,10 @@ queryNFTRoutes.openapi(route, async (c) => {
     response.headers.set("cache-control", `public, max-age=${CACHE_API_MAX_AGE}`);
     response.headers.set(
       "cache-tag",
-      cacheTagHeader(nameTag(networkName, name), tokenTag(networkName, NAME_WRAPPER_V2, hash)),
+      cacheTagHeader(
+        nameTag(networkName, name),
+        tokenTag(networkName, contract, tokenIdToHex(tokenId)),
+      ),
     );
     return response;
   }) as never;

@@ -9,6 +9,9 @@ export type Env = {
   ENSNODE_URL_MAINNET: string;
   ENSNODE_URL_SEPOLIA: string;
   ENSNODE_URL_HOLESKY: string;
+  ENS_REGISTRY_V2_MAINNET?: string;
+  ENS_REGISTRY_V2_SEPOLIA?: string;
+  ENS_REGISTRY_V2_HOLESKY?: string;
 
   OPENSEA_API_KEY?: string;
   RPC_API_KEY?: string;

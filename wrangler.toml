@@ -15,6 +15,10 @@ IPFS_GATEWAYS = "https://apac.orbitor.dev,https://eu.orbitor.dev,https://latam.o
 ENSNODE_URL_MAINNET = "https://api.alpha.ensnode.io"
 ENSNODE_URL_SEPOLIA = "https://api.alpha-sepolia.ensnode.io"
 ENSNODE_URL_HOLESKY = ""
+# Optional ENSv2 EthRegistry addresses for namehash lookups (leave empty until deployed)
+ENS_REGISTRY_V2_MAINNET = ""
+ENS_REGISTRY_V2_SEPOLIA = ""
+ENS_REGISTRY_V2_HOLESKY = ""
 
 [[r2_buckets]]
 binding = "IPFS_CACHE"
