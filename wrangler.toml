@@ -8,7 +8,7 @@ mode = "smart"
 
 [vars]
 CF_ZONE_ID = "4afbac62839fe25b7c506f94eb6b9c87"
-ETH_RPC_URL = "https://eth.drpc.org"
+ETH_RPC_URL = "https://eth-mainnet.g.alchemy.com/v2/ZZ3NpTZGyfh0rZQsyCQ1KkjRhz3MKBj7"
 SEPOLIA_RPC_URL = "https://sepolia.drpc.org"
 HOLESKY_RPC_URL = "https://holesky.drpc.org"
 IPFS_GATEWAYS = "https://apac.orbitor.dev,https://eu.orbitor.dev,https://latam.orbitor.dev,https://ipfs.filebase.io,https://dweb.link,https://4everland.io,https://ipfs.io"
