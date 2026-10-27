@@ -40,6 +40,7 @@ function domainRecord(name: string) {
       expiryDate: "3",
     },
     owner: { id: "0x0000000000000000000000000000000000000001" },
+    wrappedOwner: { id: "0x0000000000000000000000000000000000000001" },
   };
 }
 
@@ -164,7 +165,7 @@ describe("route cache headers", () => {
         network: "mainnet",
         contract: NAME_WRAPPER_V2,
         tokenHex,
-        version: "svg-v5",
+        version: "svg-v6",
       },
       toArrayBuffer(new TextEncoder().encode("<svg/>")),
       "image/svg+xml",
@@ -183,7 +184,7 @@ describe("route cache headers", () => {
     expect(await response.text()).toBe("<svg/>");
 
     await testEnv.IPFS_CACHE.delete(
-      `generated/mainnet/${NAME_WRAPPER_V2.toLowerCase()}/${tokenHex}/svg-v5.bin`,
+      `generated/mainnet/${NAME_WRAPPER_V2.toLowerCase()}/${tokenHex}/svg-v6.bin`,
     );
     const cachedCtx = createExecutionContext();
     const cached = await nameImageRoutes.fetch(request, testEnv, cachedCtx);

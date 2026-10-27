@@ -1,6 +1,6 @@
 import { ens_beautify, ens_normalize } from '@adraffy/ens-normalize'
 import type { Env } from '../env'
-import { HttpError } from '../lib/errors'
+import { getNetwork } from '../lib/networks'
 import { SATOSHI_BOLD_ADVANCE_AT_20PX } from '../lib/fontMetrics'
 import { fetchImageBytes, resolveUriCached } from './image'
 import SatoshiBold from '../fonts/Satoshi-Bold.ttf'
@@ -11,6 +11,7 @@ export type NameImageInput = {
 	networkName: string
 	name: string
 	tokenHex: string
+	avatarUrl?: string
 }
 
 type ResolvedAvatar = { contentType: string; bytes: ArrayBuffer } | null
@@ -20,24 +21,36 @@ async function resolveAvatar(
 	ctx: ExecutionContext,
 	networkName: string,
 	name: string,
+	avatarUrl?: string,
 ): Promise<ResolvedAvatar> {
+	const network = getNetwork(env, networkName)
+	if (!network) return null
+	const fetchAvatar = async (uri: string): Promise<ResolvedAvatar> => {
+		try {
+			const image = await fetchImageBytes(env, uri, ctx, { network, name })
+			const contentType = image.contentType.split(';')[0]!.trim().toLowerCase()
+			if (!/^image\/[a-z0-9.+-]+$/.test(contentType)) return null
+			const bytes = image.body instanceof ArrayBuffer
+				? image.body : await new Response(image.body).arrayBuffer()
+			return { contentType, bytes }
+		} catch {
+			return null
+		}
+	}
+	// Grails supplies a resolved image URL. Do not put it in the raw ENS
+	// record cache: that would hide NFT references and their ownership checks.
+	if (avatarUrl) {
+		const avatar = await fetchAvatar(avatarUrl)
+		if (avatar) return avatar
+	}
 	let uri: string
 	try {
 		uri = await resolveUriCached(env, 'avatar', networkName, name, ctx)
-	} catch (err) {
-		if (err instanceof HttpError) return null
-		throw err
-	}
-	try {
-		const image = await fetchImageBytes(env, uri, ctx)
-		const bytes =
-			image.body instanceof ArrayBuffer
-				? image.body
-				: await new Response(image.body).arrayBuffer()
-		return { contentType: image.contentType, bytes }
 	} catch {
+		// Avatar resolution is optional, including RPC/CCIP failures.
 		return null
 	}
+	return fetchAvatar(uri)
 }
 
 function bytesToBase64(buf: ArrayBuffer): string {
@@ -275,6 +288,7 @@ export async function renderNameImage(input: NameImageInput): Promise<string> {
 				input.ctx,
 				input.networkName,
 				input.name,
+				input.avatarUrl,
 			)
 		: null
 

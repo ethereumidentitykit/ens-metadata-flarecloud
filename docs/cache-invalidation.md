@@ -24,6 +24,19 @@ name.
 
 ## When to call it
 
+For ENSv2, include **`network`, `name`, `contract`, and the actual `tokenId`**.
+The contract is the parent registry holding that token. A token-only request
+without a contract fans out only to the network's legacy BaseRegistrar and
+NameWrapper; it cannot discover V2 registries. Name-only invalidation purges
+the name tag, but cannot derive V2 token IDs.
+
+Handle `TokenRegenerated` by invalidating both the old and new token IDs with
+the registry and name. Also invalidate on `LabelRegistered`,
+`LabelUnregistered`, `ExpiryUpdated`, transfers, migration, and registry
+hierarchy changes. For a subtree rename/reparent, invalidate affected old and
+new names and token tuples. V2 cards do not persist in R2 and their edge TTL
+is 15 minutes. See the [ENS indexing guide](https://docs.ens.domains/ensv2/indexing/).
+
 Call the endpoint whenever a record you indexed could affect one of our
 cached assets. The pragmatic set:
 
@@ -84,12 +97,12 @@ end-to-end verification of the CDN purge.
   e.g. `"foo.eth"` or `"sub.foo.eth"`.
 - **`tokenId`** — optional. Decimal or `0x`-hex token id from the NFT
   contract that fired the event. When sent without `contract`, the
-  service tries every contract in its `TOKEN_CONTRACTS` list against
+  service tries the network's legacy BaseRegistrar and NameWrapper against
   this tokenId — so the indexer doesn't need to know whether the
   event came from the base registrar or the name wrapper.
 - **`contract`** — optional. `0x`-prefixed EVM address of a specific NFT
-  contract. Only needed when you want to narrow invalidation to that
-  one contract; otherwise omit it. Requires `tokenId`.
+  contract. Required for precise ENSv2 token invalidation. For V1 it can be
+  omitted to target both legacy contracts. Requires `tokenId`.
 
 **Each item must contain `name` or `tokenId` (or both).** Missing both
 is rejected with `400`; sending `contract` without `tokenId` is also

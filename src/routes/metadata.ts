@@ -23,13 +23,14 @@ const route = createRoute({
   tags: ["metadata"],
   summary: "Get ENS NFT metadata JSON",
   description:
-    "ERC-721/1155 metadata for an ENS name token: normalized name, description, attributes (registration/expiry/length), and the avatar/background image URLs. `contract` is the BaseRegistrar (v1) or NameWrapper (v2) address; `tokenId` may be decimal or 0x-hex.",
+    "ERC-721/1155 metadata for ENSv1 BaseRegistrar/NameWrapper and ENSv2 registry tokens. ENSv2 uses a network-specific Grails token lookup, verified against the registry and current token ID. tokenId may be decimal or 0x-hex. The legacy version field describes the metadata format; ens_version identifies the ENS protocol.",
   request: {
     params: z.object({
       network: NetworkParam,
       contract: AddressParam,
       tokenId: TokenIdParam,
     }),
+    query: z.object({ name: z.string().min(1).optional().openapi({ description: "Optional name constraint, checked against the requested token", example: "hmnd-demo.eth" }) }),
   },
   responses: {
     200: {
@@ -38,6 +39,9 @@ const route = createRoute({
     },
     400: { description: "Bad request", content: { "application/json": { schema: ErrorSchema } } },
     404: { description: "Not found", content: { "application/json": { schema: ErrorSchema } } },
+    410: { description: "Token retired by the metadata provider", content: { "application/json": { schema: ErrorSchema } } },
+    502: { description: "Metadata provider failed", content: { "application/json": { schema: ErrorSchema } } },
+    503: { description: "Metadata provider temporarily unavailable", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
 
@@ -52,11 +56,13 @@ function isNormalized(name: string): boolean {
 metadataRoutes.openapi(route, async (c) => {
   return respondFromCache(caches.default, c.req.raw, c.executionCtx, async () => {
     const { network: networkName, contract, tokenId: tokenIdRaw } = c.req.valid("param");
+    const nameHint = c.req.valid("query").name;
     const { kind, tokenHex, record } = await resolveDomain(
       c.env,
       networkName,
       contract,
       tokenIdRaw,
+      nameHint,
     );
 
     const name = record.name ?? (record.labelName ? `${record.labelName}.eth` : null);
@@ -89,14 +95,16 @@ metadataRoutes.openapi(route, async (c) => {
     }
 
     const tokenHash =
-      kind === "v1" && record.labelName
+      kind === "ensv2" ? tokenHex : kind === "base-registrar" && record.labelName
         ? keccak256(new TextEncoder().encode(record.labelName))
         : name
           ? namehash(name)
           : tokenHex;
 
     const origin = new URL(c.req.url).origin;
-    const image = `${origin}/${networkName}/${contract}/${tokenIdRaw}/image`;
+    const imageUrl = new URL(`/${networkName}/${contract}/${tokenIdRaw}/image`, origin);
+    if (name && nameHint) imageUrl.searchParams.set("name", name);
+    const image = imageUrl.href;
     const normalized = name ? isNormalized(name) : false;
     const backgroundImage = normalized
       ? `${origin}/${networkName}/avatar/${encodeURIComponent(name!)}`
@@ -112,7 +120,8 @@ metadataRoutes.openapi(route, async (c) => {
         attributes,
         name_length: record.labelName?.length ?? null,
         url: name ? `https://app.ens.domains/name/${name}` : null,
-        version: kind === "v1" ? 1 : 2,
+        version: kind === "base-registrar" ? 1 : 2,
+        ens_version: kind === "ensv2" ? 2 : 1,
         background_image: backgroundImage,
         image,
         image_url: image,

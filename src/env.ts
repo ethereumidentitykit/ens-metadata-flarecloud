@@ -10,6 +10,12 @@ export type Env = {
   SUBGRAPH_URL_SEPOLIA: string;
   SUBGRAPH_URL_HOLESKY: string;
 
+  // Network-specific Grails /api/v1 roots. A Sepolia API must never be used
+  // for mainnet names: the backend selects its chain by deployment.
+  GRAILS_API_URL_MAINNET?: string;
+  GRAILS_API_URL_SEPOLIA?: string;
+  GRAILS_API_URL_HOLESKY?: string;
+
   THE_GRAPH_API_KEY?: string;
   OPENSEA_API_KEY?: string;
 
