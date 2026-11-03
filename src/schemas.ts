@@ -61,6 +61,7 @@ export const NFTMetadataSchema = z
     name_length: z.number().nullable(),
     url: z.string().nullable(),
     version: z.number(),
+    ens_version: z.union([z.literal(1), z.literal(2)]),
     background_image: z.string().nullable(),
     image: z.string().nullable(),
     image_url: z.string().nullable(),
@@ -76,6 +77,8 @@ export const QueryNFTSchema = z
     namehash: z.string(),
     contract: z.string(),
     tokenId: z.string(),
+    ens_version: z.union([z.literal(1), z.literal(2)]),
+    metadata_url: z.string(),
     owner: z.string().nullable(),
     registration: z
       .object({

@@ -15,13 +15,15 @@
 	},
 	"dependencies": {
 		"@adraffy/ens-normalize": "^1.11.1",
+		"@ensdomains/etherloom": "0.1.0-alpha.4",
 		"@hono/zod-openapi": "^0.18.4",
 		"@resvg/resvg-wasm": "^2.6.2",
 		"@scalar/hono-api-reference": "^0.10.9",
+		"adaptive-layout-composer": "https://github.com/ensdomains/adaptive-layout-composer/archive/6e85e0bbc113a7e0880afbd23b7fff8f477f401b.tar.gz",
 		"graphql": "^16.10.0",
 		"graphql-request": "^7.1.2",
 		"hono": "^4.7.0",
-		"viem": "^2.23.0",
+		"viem": "^2.48.1",
 		"zod": "^3.24.2"
 	},
 	"devDependencies": {

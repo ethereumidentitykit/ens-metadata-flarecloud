@@ -14,8 +14,10 @@ export type DomainRecord = {
 	registration: {
 		registrationDate: string
 		expiryDate: string
+		registrant?: { id: string } | null
 	} | null
 	owner: { id: string } | null
+	wrappedOwner?: { id: string } | null
 }
 
 const DOMAIN_BY_LABELHASH = gql`
@@ -26,8 +28,9 @@ const DOMAIN_BY_LABELHASH = gql`
       labelName
       labelhash
       createdAt
-      registration { registrationDate expiryDate }
+      registration { registrationDate expiryDate registrant { id } }
       owner { id }
+      wrappedOwner { id }
     }
   }
 `
@@ -43,10 +46,12 @@ const DOMAIN_BY_NAMEHASH = gql`
 			registration {
 				registrationDate
 				expiryDate
+				registrant { id }
 			}
 			owner {
 				id
 			}
+			wrappedOwner { id }
 		}
 	}
 `

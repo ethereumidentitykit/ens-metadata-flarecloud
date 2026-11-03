@@ -5,9 +5,9 @@ import { badRequest, HttpError } from "../../lib/errors";
 import { log } from "../../lib/log";
 import { runIndexerBatch } from "../../lib/indexerBatch";
 import { nameTag, tokenTag } from "../../lib/cacheTags";
-import { getNetwork } from "../../lib/networks";
+import { getNetwork, nameWrapperAddress, type NetworkName } from "../../lib/networks";
 import { tokenIdToHex } from "../../services/domain";
-import { TOKEN_CONTRACTS } from "../../constants";
+import { BASE_REGISTRAR_V1 } from "../../constants";
 import { deleteResolved } from "../../storage/kvCache";
 import { deleteGeneratedForToken } from "../../storage/r2Cache";
 import { ErrorSchema } from "../../schemas";
@@ -56,7 +56,7 @@ const route = createRoute({
   tags: ["cache"],
   summary: "Invalidate cached name image, avatar, and header for ENS names",
   description:
-    "Deletes KV resolver entries and R2 generated-image entries, then purges the Cloudflare edge cache by tag. Each item needs `name` or `tokenId` (or both). When `contract` is omitted, every contract in the service's `TOKEN_CONTRACTS` list is invalidated against the given token — the indexer doesn't need to know which contract a given tokenId belongs to. Requires `Authorization: Bearer <CACHE_INVALIDATION_TOKEN>`.",
+    "Deletes KV resolver entries and R2 generated-image entries, then purges the Cloudflare edge cache by tag. Each item needs name or tokenId (or both). Omitting contract targets the network's legacy BaseRegistrar and NameWrapper only. For ENSv2 send name, registry contract and actual tokenId; invalidate both IDs on token regeneration. Requires Authorization: Bearer <CACHE_INVALIDATION_TOKEN>.",
   security: [{ bearerAuth: [] }],
   request: {
     body: { content: { "application/json": { schema: RequestBody } } },
@@ -96,6 +96,10 @@ type PerItem = {
  */
 function contractsToInvalidate(item: Item): Array<{ contract: string; tokenHex: `0x${string}` }> {
   const out: Array<{ contract: string; tokenHex: `0x${string}` }> = [];
+  const contracts = [
+    { address: BASE_REGISTRAR_V1, derivation: "label" },
+    { address: nameWrapperAddress(item.network as NetworkName), derivation: "name" },
+  ];
 
   if (item.contract && item.tokenId) {
     if (!isAddress(item.contract)) {
@@ -107,14 +111,15 @@ function contractsToInvalidate(item: Item): Array<{ contract: string; tokenHex: 
 
   if (item.tokenId) {
     const tokenHex = tokenIdToHex(item.tokenId);
-    for (const c of TOKEN_CONTRACTS) out.push({ contract: c.address, tokenHex });
+    for (const c of contracts) out.push({ contract: c.address, tokenHex });
     return out;
   }
 
   // name-only: derive tokenHex per contract using its `derivation` kind.
   if (item.name) {
-    for (const c of TOKEN_CONTRACTS) {
+    for (const c of contracts) {
       if (c.derivation === "label") {
+        if (item.name.split(".").length !== 2 || !item.name.endsWith(".eth")) continue;
         const label = item.name.split(".")[0];
         if (!label) continue;
         out.push({ contract: c.address, tokenHex: labelhash(label) });
