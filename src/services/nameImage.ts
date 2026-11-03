@@ -12,6 +12,7 @@ export type NameImageInput = {
 	name: string
 	tokenHex: string
 	avatarUrl?: string
+	ensVersion?: 1 | 2
 }
 
 type ResolvedAvatar = { contentType: string; bytes: ArrayBuffer } | null
@@ -291,6 +292,16 @@ export async function renderNameImage(input: NameImageInput): Promise<string> {
 				input.avatarUrl,
 			)
 		: null
+
+	if (input.ensVersion === 2 && normalized) {
+		const { renderNameImageV2 } = await import('./nameImageV2')
+		return renderNameImageV2({
+			name: input.name,
+			avatarDataUrl: avatar
+				? `data:${avatar.contentType};base64,${bytesToBase64(avatar.bytes)}`
+				: undefined,
+		})
+	}
 
 	const { domain, subdomainText } = processSubdomain(displayName)
 	const { domain: processedDomain, fontSize } = processDomain(domain)

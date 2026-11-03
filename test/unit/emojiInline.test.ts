@@ -42,6 +42,13 @@ describe("isEmojiGrapheme", () => {
 		expect(isEmojiGrapheme("中")).toBe(false);
 		expect(isEmojiGrapheme("ع")).toBe(false);
 	});
+
+	it("recognizes keycaps and flag pairs without treating plain digits as emoji", () => {
+		expect(isEmojiGrapheme("0️⃣")).toBe(true);
+		expect(isEmojiGrapheme("9⃣")).toBe(true);
+		expect(isEmojiGrapheme("🇸🇮")).toBe(true);
+		expect(isEmojiGrapheme("0")).toBe(false);
+	});
 });
 
 describe("inlineEmojiAsImages", () => {
@@ -63,6 +70,26 @@ describe("inlineEmojiAsImages", () => {
 			expect(out).toContain("data:image/svg+xml;base64,");
 			expect(out).toContain(">.eth<");
 			expect(out).not.toContain(">🔥.eth<");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it.each([true, false])("spaces V2 keycaps correctly when emoji CDN succeeds: %s", async (cdnWorks) => {
+		const originalFetch = globalThis.fetch;
+		const assets: string[] = [];
+		globalThis.fetch = (async (url: string) => {
+			assets.push(url);
+			return new Response("<svg/>", { status: cdnWorks ? 200 : 404 });
+		}) as typeof fetch;
+		try {
+			const out = await inlineEmojiAsImages('<svg data-ens-version="2"><text x="10" y="50" font-size="20px">0️⃣9️⃣8️⃣.eth</text></svg>');
+			expect(assets.map((url) => url.split('/').pop())).toEqual(['30-20e3.svg', '39-20e3.svg', '38-20e3.svg']);
+			expect(out.match(/<image /g) ?? []).toHaveLength(cdnWorks ? 3 : 0);
+			expect(out).toContain('x="10.00"');
+			expect(out).toContain('x="30.00"');
+			expect(out).toContain('x="50.00"');
+			expect(out).toContain('<text x="70.00"');
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

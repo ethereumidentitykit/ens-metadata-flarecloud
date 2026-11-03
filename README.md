@@ -32,7 +32,7 @@ A subset of [`ensdomains/ens-metadata-service`](https://github.com/ensdomains/en
 
 ## ENSv2 support and backend coverage
 
-Checked 2026-10-27: this service uses the supplied Grails `/names/by-token/{contract}/{tokenId}` endpoint for ENSv2 identity. `wrangler.toml` configures `https://grails-v2-prep.up.railway.app/api/v1` **only for Sepolia**. The endpoint has no chain ID parameter or chain field in its response: its network is determined by the backend deployment. Mainnet V2 requires a separately configured, correctly indexed `GRAILS_API_URL_MAINNET`; the Sepolia URL must not be reused there.
+This service uses Grails' `/names/by-token/{contract}/{tokenId}` endpoint for ENSv2 identity. `wrangler.toml` configures `https://api.grails.app/api/v1` for mainnet and `https://grails-v2-prep.up.railway.app/api/v1` for Sepolia. The endpoint has no chain ID parameter or chain field in its response: its network is determined by the backend deployment. Keep these network-specific deployments separate.
 
 The legacy ENS subgraph does not index ENSv2. ENSNode offers a different [Omnigraph API](https://ensnode.io/docs/integrate/ens-subgraph/key-limitations/) for V1 and V2; its subgraph-compatible API is still V1-only. Its [hosted instances](https://ensnode.io/docs/hosted-instances/) documentation listed an experimental V2 Sepolia instance whose hostname failed TLS verification during the 2026-10-26 check. Do not replace `SUBGRAPH_URL_*` with an Omnigraph URL: the schemas differ.
 
@@ -64,6 +64,22 @@ On API-configured networks, `/queryNFT` checks Grails before the legacy subgraph
 For name cards, a returned avatar URL goes through the existing image fetch/sanitization pipeline. `null` is ambiguous in the backend (no avatar or worker failure), so absent or unusable URLs fall back to direct ENS resolution. If avatar enrichment times out or fails upstream, identity is retried without `include=avatar`. Optional avatar failures produce the default card artwork. Resolved backend URLs are not written into the raw ENS-record cache. Provider-resolved NFT avatar images rely on the backend worker's verification; locally resolved NFT references verify ownership against the ENS resolved address. Generated-card cache versions were bumped for this ownership-check fix.
 
 Direct avatar/header resolution uses viem's canonical Universal Resolver and CCIP-Read. The minimum viem version exceeds the [ENSv2 readiness requirement](https://docs.ens.domains/web/ensv2-readiness/); no resolver address is hardcoded. V2 metadata, name lookup and cards cache for 15 minutes. V2 cards bypass permanent R2 generated-card caching because ancestry and [token IDs can change](https://docs.ens.domains/ensv2/mutable-token-ids/). Backend caching can add further lag.
+
+### ENSv2 name cards
+
+Checked 2026-11-03: the legacy `ensdomains/ens-metadata-service` repository still uses the gradient card. ENS added the new artwork in the separate [metadata-service-v2 repository, PR #106](https://github.com/ensdomains/metadata-service-v2/pull/106). This implementation follows its [pinned image renderer](https://github.com/ensdomains/metadata-service-v2/blob/1d022b72b9fd445e82d6b90f6658433de2871190/src/services/image.ts), using the same pinned `@ensdomains/etherloom` and `adaptive-layout-composer` packages.
+
+Protocol V2 cards are 518×518: a weave seeded by the normalized **namehash** (independent of mutable token IDs), neutral background, bottom-left ENS badge and fitted name label. Resolved avatars replace the weave. ENSv1 BaseRegistrar and NameWrapper cards retain their existing design; the historical NameWrapper metadata `version: 2` does not select the new card. PNGs use Twemoji for emoji, including keycaps and flags; SVGs use the browser's emoji font.
+
+Grails applies time-dependent colors to the service's SVG in its frontend. V2 SVGs expose `data-ens-version="2"`, `data-ens-v2-background="weave|avatar"`, and four solid gradient IDs: `ens-v2-card`, `ens-v2-accent`, `ens-v2-weave-primary`, `ens-v2-weave-secondary`. Only weave cards are recolored: Available uses ENS lapis blue, Premium peridot green, and Grace citrine gold. These are Grails status mappings of ENS's palettes; the service renders the complete SVG with the neutral default and does not resolve users' `theme` text records.
+
+To inspect the supplied mainnet fixtures, run `npm run dev -- --port 8787`, then visit `http://localhost:8787/mainnet/0xf60aba43e1f7f3dab1186ff03b561401c9df85e2/{tokenId}/image` (append `/png` for PNG):
+
+| Name | Token ID |
+| --- | --- |
+| 0️⃣9️⃣8️⃣.eth | `58279671896788846314155201061210543096514726077589650148738398081573216845824` |
+| plaincheese.eth | `54494956297487249568745351257914987792682647291014424780154656679707191279616` |
+| nftowners.eth | `54496932390861802340678584582889966396092435429798504729640228787264948273152` |
 
 Before production: confirm backend chain and registry coverage, add subregistry discovery/indexing and reliable index-health reporting, and wire invalidation for registration, expiry, transfer, regeneration, migration and hierarchy changes. Backend code was not modified by this integration. See [cache invalidation](#indexer-endpoints).
 

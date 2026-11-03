@@ -26,7 +26,8 @@ export function emojiFilename(grapheme: string): string {
 	return codepoints.join("-");
 }
 
-const EMOJI_RE = /\p{Extended_Pictographic}/u;
+// Keycaps and flag pairs are emoji too, but neither is Extended_Pictographic.
+const EMOJI_RE = /\p{Extended_Pictographic}|[0-9#*]\uFE0F?\u20E3|\p{Regional_Indicator}{2}/u;
 export function isEmojiGrapheme(grapheme: string): boolean {
 	return EMOJI_RE.test(grapheme);
 }
@@ -51,6 +52,7 @@ function svgToDataUrl(svg: string): string {
 // Mirrors `estimateAdvance` in nameImage.ts — keep in sync. Returns advance
 // width in px at 20px font-size; caller scales by fontSize/20.
 function advanceAt20px(grapheme: string): number {
+	if (isEmojiGrapheme(grapheme)) return 20;
 	const cp = grapheme.codePointAt(0) ?? 0;
 	if (cp < 0x0300 && grapheme.length === 1) return 14;
 	if (cp >= 0x1f000) return 20;
@@ -93,7 +95,9 @@ function parseTextAttrs(attrStr: string): TextAttrs | null {
 	return { x: xNum, y: yNum, fontSize: fsNum, rest };
 }
 
-async function buildEmojiTextRuns(content: string, attrs: TextAttrs): Promise<string> {
+type MeasureText = (text: string, fontSize: number) => Promise<number>;
+
+async function buildEmojiTextRuns(content: string, attrs: TextAttrs, measureText?: MeasureText): Promise<string> {
 	const segmenter = new Intl.Segmenter();
 	const segments = [...segmenter.segment(content)].map((s) => s.segment);
 	const advanceScale = attrs.fontSize / 20;
@@ -102,8 +106,9 @@ async function buildEmojiTextRuns(content: string, attrs: TextAttrs): Promise<st
 	let textStartX = attrs.x;
 	let cursorX = attrs.x;
 
-	const flushText = () => {
+	const flushText = async () => {
 		if (!textBuffer) return;
+		if (measureText) cursorX = textStartX + await measureText(textBuffer, attrs.fontSize);
 		parts.push(
 			`<text x="${textStartX.toFixed(2)}" y="${attrs.y}" font-size="${attrs.fontSize}px" ${attrs.rest}>${escapeXmlText(textBuffer)}</text>`,
 		);
@@ -113,7 +118,8 @@ async function buildEmojiTextRuns(content: string, attrs: TextAttrs): Promise<st
 	for (const seg of segments) {
 		const segWidth = advanceAt20px(seg) * advanceScale;
 		if (isEmojiGrapheme(seg)) {
-			flushText();
+			await flushText();
+			const emojiStartX = cursorX;
 			const filename = emojiFilename(seg);
 			const svg = await fetchTwemojiSvg(filename);
 			if (svg) {
@@ -128,16 +134,16 @@ async function buildEmojiTextRuns(content: string, attrs: TextAttrs): Promise<st
 				// emits whatever it can (likely tofu).
 				textBuffer = seg;
 				textStartX = cursorX;
-				flushText();
+				await flushText();
 			}
-			cursorX += segWidth;
+			cursorX = emojiStartX + segWidth;
 			textStartX = cursorX;
 		} else {
 			textBuffer += seg;
 			cursorX += segWidth;
 		}
 	}
-	flushText();
+	await flushText();
 	return parts.join("");
 }
 
@@ -156,6 +162,10 @@ export async function inlineEmojiAsImages(svg: string): Promise<string> {
 		.map((m) => ({ match: m, hasEmoji: EMOJI_RE.test(m[2] ?? "") }))
 		.filter((w) => w.hasEmoji);
 	if (work.length === 0) return svg;
+	// V2's fitted label and PNG text runs must use the same font metrics.
+	const measureText = /<svg\b[^>]*data-ens-version="2"/.test(svg)
+		? (await import('./nameImageV2')).measureV2Text
+		: undefined;
 
 	const replacements = await Promise.all(
 		work.map(async ({ match }) => {
@@ -163,7 +173,7 @@ export async function inlineEmojiAsImages(svg: string): Promise<string> {
 			const content = match[2] ?? "";
 			const attrs = parseTextAttrs(attrStr);
 			if (!attrs) return null;
-			const replacement = await buildEmojiTextRuns(content, attrs);
+			const replacement = await buildEmojiTextRuns(content, attrs, measureText);
 			return { full: match[0], replacement };
 		}),
 	);
