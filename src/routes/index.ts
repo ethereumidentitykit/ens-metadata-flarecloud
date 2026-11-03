@@ -3,6 +3,7 @@ import type { Env } from "../env";
 import { avatarRoutes, headerRoutes } from "./images";
 import { metadataRoutes } from "./metadata";
 import { nameImageRoutes } from "./nameImage";
+import { defaultNameImageRoutes } from "./defaultNameImage";
 import { queryNFTRoutes } from "./queryNFT";
 import { adminRoutes } from "./admin";
 
@@ -17,6 +18,7 @@ export function registerRoutes(app: OpenAPIHono<{ Bindings: Env }>): void {
   app.route("/", avatarRoutes);
   app.route("/", headerRoutes);
   app.route("/", queryNFTRoutes);
+  app.route("/", defaultNameImageRoutes);
   app.route("/", nameImageRoutes);
   app.route("/", metadataRoutes);
   app.route("/", adminRoutes);

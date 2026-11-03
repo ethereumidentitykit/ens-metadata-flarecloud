@@ -16,6 +16,8 @@ A subset of [`ensdomains/ens-metadata-service`](https://github.com/ensdomains/en
 | `GET /{network}/{contract}/{tokenId}`           |    ✓     |              ✓               |
 | `GET /{network}/{contract}/{tokenId}/image`     |    ✓     |  ✓ (SVG card via resvg-wasm) |
 | `GET /{network}/{contract}/{tokenId}/image/png` |    ✗     |   ✓ (PNG card via resvg-wasm)|
+| `GET /v2/image/{label}`                       |    ✗     |   ✓ (default V2 SVG, no lookups) |
+| `GET /v2/image/{label}/png`                   |    ✗     |   ✓ (default V2 PNG, no lookups) |
 | `GET /{network}/{contract}/{tokenId}/rasterize` |    ✓     |     ✗ (needs Puppeteer)      |
 | `GET /{network}/avatar/{name}`                  |    ✓     |              ✓               |
 | `GET /{network}/avatar/{name}/meta`             |    ✓     |              ✓               |
@@ -72,6 +74,12 @@ Checked 2026-11-03: the legacy `ensdomains/ens-metadata-service` repository stil
 Protocol V2 cards are 518×518: a weave seeded by the normalized **namehash** (independent of mutable token IDs), neutral background, bottom-left ENS badge and fitted name label. Resolved avatars replace the weave. ENSv1 BaseRegistrar and NameWrapper cards retain their existing design; the historical NameWrapper metadata `version: 2` does not select the new card. PNGs use Twemoji for emoji, including keycaps and flags; SVGs use the browser's emoji font.
 
 Grails applies time-dependent colors to the service's SVG in its frontend. V2 SVGs expose `data-ens-version="2"`, `data-ens-v2-background="weave|avatar"`, and four solid gradient IDs: `ens-v2-card`, `ens-v2-accent`, `ens-v2-weave-primary`, `ens-v2-weave-secondary`. Only weave cards are recolored: Available uses ENS lapis blue, Premium peridot green, and Grace citrine gold. These are Grails status mappings of ENS's palettes; the service renders the complete SVG with the neutral default and does not resolve users' `theme` text records.
+
+`GET /v2/image/{label}` generates that default V2 card from a label or full name, without any metadata, registration, owner, or avatar lookups. Bare labels receive an `.eth` suffix: `/v2/image/plaincheese` renders `plaincheese.eth`. Full names, including subnames and other ENS suffixes, render as supplied: `/v2/image/sub.plaincheese.eth` renders `sub.plaincheese.eth`. URL-encode the input with `encodeURIComponent`. Both forms are ENS-normalized; invalid names return HTTP 400, and input is limited to 1024 UTF-16 code units. The complete SVG includes the Satoshi font and the same palette IDs.
+
+Append `/png` for a 518×518 PNG of the same neutral card, for example `/v2/image/plaincheese/png`. It uses the existing rasterizer and bundled Satoshi font; emoji and other Unicode may fetch Twemoji or fallback-font assets. Both formats are edge-cached for one day, with independent cache entries and no KV or R2 access. Neither checks whether a name is available.
+
+Grails uses default SVGs for Available and Premium second-level `.eth` names regardless of their previous protocol version, then applies the appropriate status colors. Registered and Grace names first try their current token image, falling back to the default V2 SVG if it cannot be loaded. Client views share this fetch-and-recolor flow through `NameImage`; server-rendered name previews use the default `/png` endpoint.
 
 To inspect the supplied mainnet fixtures, run `npm run dev -- --port 8787`, then visit `http://localhost:8787/mainnet/0xf60aba43e1f7f3dab1186ff03b561401c9df85e2/{tokenId}/image` (append `/png` for PNG):
 
