@@ -1,8 +1,9 @@
 import { ens_beautify, ens_normalize } from '@adraffy/ens-normalize'
 import { generateIdenticon } from '@ensdomains/etherloom'
-import { createDynamicSVGImage, initializeFont, measureTextAccurate } from 'adaptive-layout-composer'
+import { createDynamicSVGImage } from 'adaptive-layout-composer'
 import { namehash } from 'viem/ens'
-import SatoshiBold from '../fonts/Satoshi-Bold.ttf'
+import { inlineEmojiAsImages } from './emojiInline'
+import { containsEmoji, ensureNameFont, measureNameText, segmentName } from './nameText'
 
 // ENS's v2 card is maintained in a separate repository from the v1 service:
 // https://github.com/ensdomains/metadata-service-v2/blob/1d022b72b9fd445e82d6b90f6658433de2871190/src/services/image.ts
@@ -17,36 +18,93 @@ const PALETTE = {
 	'ens-v2-weave-primary': '#C6C7C4',
 	'ens-v2-weave-secondary': '#e3e3e2',
 } as const
-const TEXT_FEATURES = ['ss01', 'ss03', 'tnum']
-const EMOJI_RE = /\p{Extended_Pictographic}|[0-9#*]\uFE0F?\u20E3|\p{Regional_Indicator}{2}/u
 const SAFE_AVATAR_RE = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]*={0,2}$/
-let fontReady: Promise<unknown> | undefined
 
-function ensureFont(): Promise<unknown> {
-	return fontReady ??= initializeFont(SatoshiBold)
-}
+// Retain the exported helper for existing callers while all renderers share
+// the same glyph widths and emoji advances.
+export const measureV2Text = measureNameText
 
-/** Match the square emoji images used by our PNG renderer while retaining
- * the composer's Satoshi metrics and kerning for each surrounding text run. */
-export async function measureV2Text(text: string, fontSize: number): Promise<number> {
-	await ensureFont()
-	let width = 0
-	let run = ''
-	const flush = async () => {
-		if (!run) return
-		width += (await measureTextAccurate(run, fontSize, 'Satoshi', { features: TEXT_FEATURES })).width
-		run = ''
-	}
-	for (const { segment } of new Intl.Segmenter().segment(text)) {
-		if (EMOJI_RE.test(segment)) {
-			await flush()
-			width += fontSize
+// The pinned composer ends at a 14-unit step (13.125px Satoshi), leaving
+// 28 rows inside its 418-unit label area after 24 units of vertical padding.
+// Use its narrower international-text width and safety margin for every name.
+const MIN_LAYOUT_FONT_SIZE = 14 * 60 / 64
+const MIN_LAYOUT_TEXT_WIDTH = 390 * 0.85 * 0.9
+const MAX_LAYOUT_ROWS = Math.floor((508 - 90 - 24) / 14)
+
+async function minimumRows(text: string, limit = MAX_LAYOUT_ROWS): Promise<number> {
+	if (await measureNameText(text, MIN_LAYOUT_FONT_SIZE) <= MIN_LAYOUT_TEXT_WIDTH) return 1
+	let rows = 1
+	let line = ''
+	for (const grapheme of segmentName(text)) {
+		const candidate = line + grapheme
+		if (line && await measureNameText(candidate, MIN_LAYOUT_FONT_SIZE) > MIN_LAYOUT_TEXT_WIDTH) {
+			if (++rows > limit) return rows
+			line = grapheme
 		} else {
-			run += segment
+			line = candidate
 		}
 	}
-	await flush()
-	return width
+	return rows
+}
+
+async function ellipsizeToRows(text: string, rows: number): Promise<string> {
+	if (await minimumRows(text, rows) <= rows) return text
+	const graphemes = segmentName(text)
+	const suffix = text.slice(text.lastIndexOf('.'))
+	// Preserve the TLD (or the sublabel's final dot) whenever it fits. Very long
+	// non-.eth suffixes can themselves need abbreviation, retaining their end.
+	const suffixLength = text.includes('.') && await minimumRows(`x…${suffix}`, rows) <= rows
+		? segmentName(suffix).length : 1
+	const shorten = (retained: number) => {
+		const tail = Math.max(suffixLength, Math.floor(retained / 2))
+		return graphemes.slice(0, retained - tail).join('') + '…' + graphemes.slice(-tail).join('')
+	}
+	let low = suffixLength + 1
+	let high = graphemes.length - 1
+	let best = shorten(low)
+	while (low <= high) {
+		const retained = Math.floor((low + high) / 2)
+		const candidate = shorten(retained)
+		if (await minimumRows(candidate, rows) <= rows) {
+			best = candidate
+			low = retained + 1
+		} else {
+			high = retained - 1
+		}
+	}
+	return best
+}
+
+/** The composer wraps graphemes safely but cannot fit unlimited ancestry at
+ * its minimum font size. Abbreviate display text only when that final layout
+ * would overflow; the complete canonical name still determines the weave.
+ * Normal names need only one cached width measurement, with no render retry. */
+export async function fitV2DisplayName(display: string): Promise<string> {
+	const labels = display.split('.')
+	const segments = labels.length <= 2
+		? [display]
+		: [...labels.slice(0, -2).map(label => `${label}.`), labels.slice(-2).join('.')]
+	let total = 0
+	for (const segment of segments) {
+		total += await minimumRows(segment, MAX_LAYOUT_ROWS - total)
+		if (total > MAX_LAYOUT_ROWS) break
+	}
+	if (total <= MAX_LAYOUT_ROWS) return display
+
+	// The first label identifies the leaf, the last segment the registrable
+	// root. Mark omitted middle ancestry explicitly instead of silently dropping it.
+	const abbreviated = segments.length > 2
+		? [segments[0]!, '….', segments[segments.length - 1]!]
+		: segments
+	const budgets = await Promise.all(abbreviated.map(segment => minimumRows(segment)))
+	let remaining = budgets.reduce((sum, rows) => sum + rows, 0)
+	while (remaining > MAX_LAYOUT_ROWS) {
+		const index = budgets.indexOf(Math.max(...budgets))
+		budgets[index] = budgets[index]! - 1
+		remaining--
+	}
+	return (await Promise.all(abbreviated.map((segment, index) =>
+		ellipsizeToRows(segment, budgets[index]!)))).join('')
 }
 
 function weaveBackground(name: string): string {
@@ -70,9 +128,9 @@ export async function renderNameImageV2({ name, avatarDataUrl }: {
 	name: string
 	avatarDataUrl?: string
 }): Promise<string> {
-	await ensureFont()
+	await ensureNameFont()
 	const canonical = ens_normalize(name)
-	const display = ens_beautify(canonical)
+	const display = await fitV2DisplayName(ens_beautify(canonical))
 	const avatar = avatarDataUrl && SAFE_AVATAR_RE.test(avatarDataUrl) ? avatarDataUrl : null
 	const bytes = await createDynamicSVGImage({
 		layout: 'ens-v2',
@@ -88,7 +146,7 @@ export async function renderNameImageV2({ name, avatarDataUrl }: {
 		},
 		backgroundImageUrl: avatar,
 		backgroundMarkup: avatar ? null : weaveBackground(canonical),
-		...(EMOJI_RE.test(display) ? { measureText: measureV2Text } : {}),
+		...(containsEmoji(display) ? { measureText: measureNameText } : {}),
 	})
 	let svg = new TextDecoder().decode(bytes)
 	// Solid gradients preserve identical rendering in SVG and resvg while
@@ -99,7 +157,8 @@ export async function renderNameImageV2({ name, avatarDataUrl }: {
 	const gradients = Object.entries(PALETTE)
 		.map(([id, color]) => `<linearGradient id="${id}"><stop stop-color="${color}"/></linearGradient>`)
 		.join('')
-	return svg
+	const card = svg
 		.replace('<svg ', `<svg data-ens-version="2" data-ens-v2-background="${avatar ? 'avatar' : 'weave'}" `)
-		.replace('<defs>', `<defs>${gradients}`)
+		.replace('<defs>', `<defs>${gradients}<style>text{font-kerning:normal}</style>`)
+	return inlineEmojiAsImages(card)
 }

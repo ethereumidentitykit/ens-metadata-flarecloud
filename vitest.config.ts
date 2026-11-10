@@ -14,7 +14,7 @@ export default defineConfig({
         // imports to workerd instead of letting Vite try to bundle them.
         modulesRules: [
           { type: "CompiledWasm", include: ["**/*.wasm"], fallthrough: true },
-          { type: "Data", include: ["**/*.ttf", "**/*.otf"], fallthrough: true },
+          { type: "Data", include: ["**/*.ttf", "**/*.otf", "**/*.bin"], fallthrough: true },
           { type: "Text", include: ["**/*.svg"], fallthrough: true },
         ],
         bindings: {

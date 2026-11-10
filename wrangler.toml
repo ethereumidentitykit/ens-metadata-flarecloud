@@ -30,7 +30,7 @@ preview_id = "00000000000000000000000000000000"
 
 [[rules]]
 type = "Data"
-globs = ["**/*.otf", "**/*.ttf"]
+globs = ["**/*.otf", "**/*.ttf", "**/*.bin"]
 fallthrough = true
 
 [[rules]]

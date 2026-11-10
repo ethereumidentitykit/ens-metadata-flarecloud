@@ -12,13 +12,10 @@ import {
 } from '../schemas'
 import { cacheTagHeader, nameTag, tokenTag } from '../lib/cacheTags'
 import { respondFromCache } from '../lib/responseCache'
+import { SVG_CACHE_VERSION, PNG_CACHE_VERSION } from '../lib/nameImageVersions'
 
 export const nameImageRoutes = new OpenAPIHono<{ Bindings: Env }>()
 
-// Bump per format whenever the template or rendering semantics change so
-// cached objects don't serve stale output.
-const SVG_CACHE_VERSION = 'svg-v6'
-const PNG_CACHE_VERSION = 'png-v7'
 const MAX_AGE = 60 * 60 * 24 * 365
 const SVG_CONTENT_TYPE = 'image/svg+xml'
 const PNG_CONTENT_TYPE = 'image/png'
@@ -255,6 +252,7 @@ nameImageRoutes.openapi(svgRoute, async c => {
 				legacy ? MAX_AGE : CACHE_API_MAX_AGE,
 			)
 		},
+		SVG_CACHE_VERSION,
 	) as never
 })
 
@@ -315,5 +313,6 @@ nameImageRoutes.openapi(pngRoute, async c => {
 				legacy ? MAX_AGE : CACHE_API_MAX_AGE,
 			)
 		},
+		PNG_CACHE_VERSION,
 	) as never
 })

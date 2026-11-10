@@ -4,6 +4,8 @@ import { getNetwork } from '../lib/networks'
 import { SATOSHI_BOLD_ADVANCE_AT_20PX } from '../lib/fontMetrics'
 import { fetchImageBytes, resolveUriCached } from './image'
 import SatoshiBold from '../fonts/Satoshi-Bold.ttf'
+import { inlineEmojiAsImages } from './emojiInline'
+import { containsEmoji, measureNameText, segmentName } from './nameText'
 
 export type NameImageInput = {
 	env: Env
@@ -104,13 +106,12 @@ function getSegmentLength(text: string): number {
 }
 
 function textEllipsis(name: string): string {
-	const len = name.length
-	return (
-		name.substring(0, MAX_CHAR - 7) +
-		'...' +
-		name.substring(len - 7, len - 4) +
-		'.eth'
-	)
+	const segments = segmentName(name)
+	return segments.slice(0, MAX_CHAR - 10).join('') + '...' + segments.slice(-7).join('')
+}
+
+function escapeXmlText(text: string): string {
+	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 /**
@@ -154,10 +155,11 @@ function estimateAdvance(cp: number, segment: string): number {
 }
 
 function addSpan(str: string, splitAt: number): string {
+	const segments = segmentName(str)
 	const idx = Math.floor(splitAt)
 	return `
-    <tspan x="32" dy="-1.2em">${str.substring(0, idx)}</tspan>
-    <tspan x="32" dy="1.2em">${str.substring(idx)}</tspan>
+    <tspan x="32" dy="-1.2em">${escapeXmlText(segments.slice(0, idx).join(''))}</tspan>
+    <tspan x="32" dy="1.2em">${escapeXmlText(segments.slice(idx).join(''))}</tspan>
     `
 }
 
@@ -173,37 +175,97 @@ function processDomain(domain: string): ProcessedDomain {
 	if (segLen > 25) {
 		domain = addSpan(domain, segLen / 2)
 		fontSize = (fontSize - 1) * 2
+	} else {
+		domain = escapeXmlText(domain)
 	}
 	return { domain, fontSize }
 }
 
-type ProcessedSubdomain = {
-	domain: string
-	subdomainText: string | null
+const DOMAIN_X = 32.5
+const DOMAIN_BASELINE = 231
+const NAME_WIDTH = 200
+const MAX_FONT_SIZE = 32
+
+type DomainText = { markup: string; firstBaseline: number; fontSize: number; hasEmoji: boolean }
+
+function domainLine(content: string, fontSize: number, baseline: number, isSubdomain: boolean): string {
+	return `<text x="${DOMAIN_X}" y="${baseline}" font-size="${fontSize}px"${isSubdomain ? ' opacity="0.4"' : ''} fill="white" filter="url(#dropShadow)">${content}</text>`
 }
+
+/** Balance two lines by their measured width, not UTF-16 length. Binary search
+ * needs only a handful of measurements even for a maximum-length label. */
+async function splitEmojiLines(segments: string[]): Promise<string[]> {
+	let low = 1
+	let high = segments.length - 1
+	let bestIndex = Math.floor(segments.length / 2)
+	let bestWidth = Infinity
+	while (low <= high) {
+		const index = Math.floor((low + high) / 2)
+		const [left, right] = await Promise.all([
+			measureNameText(segments.slice(0, index).join(''), 1),
+			measureNameText(segments.slice(index).join(''), 1),
+		])
+		const widest = Math.max(left, right)
+		if (widest < bestWidth) {
+			bestWidth = widest
+			bestIndex = index
+		}
+		if (left < right) low = index + 1
+		else high = index - 1
+	}
+	return [segments.slice(0, bestIndex).join(''), segments.slice(bestIndex).join('')]
+}
+
+async function buildDomainText(domain: string, isSubdomain: boolean): Promise<DomainText> {
+	if (!containsEmoji(domain)) {
+		const processed = processDomain(domain)
+		return {
+			markup: domainLine(processed.domain, processed.fontSize, DOMAIN_BASELINE, isSubdomain),
+			firstBaseline: DOMAIN_BASELINE - (getSegmentLength(domain) > 25 ? 1.2 * processed.fontSize : 0),
+			fontSize: processed.fontSize,
+			hasEmoji: false,
+		}
+	}
+
+	if (getSegmentLength(domain) > MAX_CHAR) domain = textEllipsis(domain)
+	const segments = segmentName(domain)
+	const lines = segments.length > 25 ? await splitEmojiLines(segments) : [domain]
+	const widths = await Promise.all(lines.map(line => measureNameText(line, 1)))
+	// Round down: rounding up can push the last image outside the label.
+	const fontSize = Math.min(MAX_FONT_SIZE, Math.floor(NAME_WIDTH / Math.max(...widths) * 1000) / 1000)
+	const firstBaseline = DOMAIN_BASELINE - (lines.length - 1) * fontSize * 1.2
+	return {
+		markup: lines.map((line, index) => domainLine(
+			escapeXmlText(line), fontSize, firstBaseline + index * fontSize * 1.2, isSubdomain,
+		)).join('\n'),
+		firstBaseline,
+		fontSize,
+		hasEmoji: true,
+	}
+}
+
+type ProcessedSubdomain = { domain: string; subdomain: string | null }
 
 function processSubdomain(name: string): ProcessedSubdomain {
 	const labels = name.split('.')
-	if (labels.length <= 2 || name.includes('...')) {
-		return { domain: name, subdomainText: null }
-	}
-	let subdomain = labels.slice(0, labels.length - 2).join('.') + '.'
-	const domain = labels.slice(-2).join('.')
-	if (getSegmentLength(subdomain) > MAX_CHAR) {
-		subdomain = textEllipsis(subdomain)
-	}
-	const subFont = getFontSize(subdomain)
-	const subdomainText = `
-        <text
-          x="32.5"
-          y="200"
-          font-size="${subFont}px"
-          fill="white"
-        >
-          ${subdomain}
-        </text>
-      `
-	return { domain, subdomainText }
+	if (labels.length <= 2 || name.includes('...')) return { domain: name, subdomain: null }
+	let subdomain = labels.slice(0, -2).join('.') + '.'
+	if (getSegmentLength(subdomain) > MAX_CHAR) subdomain = textEllipsis(subdomain)
+	return { domain: labels.slice(-2).join('.'), subdomain }
+}
+
+async function buildSubdomainText(subdomain: string | null, domain: DomainText): Promise<string | null> {
+	if (subdomain === null) return null
+	const emoji = containsEmoji(subdomain)
+	const fontSize = emoji
+		? Math.min(MAX_FONT_SIZE, Math.floor(NAME_WIDTH / await measureNameText(subdomain, 1) * 1000) / 1000)
+		: getFontSize(subdomain)
+	// A two-line emoji domain rises above the old fixed parent-label baseline.
+	// Keep the subname's image descent clear of the first domain line's ascent.
+	const baseline = emoji || domain.hasEmoji
+		? Math.min(200, domain.firstBaseline - domain.fontSize * 0.88 - fontSize * 0.12 - 4)
+		: 200
+	return `<text x="${DOMAIN_X}" y="${baseline}" font-size="${fontSize}px" fill="white">${escapeXmlText(subdomain)}</text>`
 }
 
 function avatarImageElement(avatar: ResolvedAvatar): string {
@@ -229,9 +291,7 @@ function buildSvg(args: {
 	background: string
 	warning: string
 	subdomainText: string | null
-	domain: string
-	domainFontSize: number
-	isSubdomain: boolean
+	domainText: string
 }): string {
 	return `<svg width="270" height="270" viewBox="0 0 270 270" fill="none" xmlns="http://www.w3.org/2000/svg">
     ${args.background}
@@ -246,13 +306,7 @@ function buildSvg(args: {
     <path d="M74.8512 52.8328C74.7008 50.7229 74.0909 48.6688 73.0624 46.8081C72.0339 44.9473 70.6105 43.3228 68.8876 42.0433L54.1514 32C54.1514 32 63.3652 44.987 71.1478 57.9098C71.933 59.2755 72.4603 60.7682 72.7043 62.3165C72.8132 63.0178 72.8132 63.7311 72.7043 64.4324C72.9071 64.0652 73.3007 63.3133 73.3007 63.3133C74.0892 61.7414 74.6262 60.0606 74.893 58.3295C75.0485 56.4998 75.0345 54.66 74.8512 52.8328Z" fill="white" filter="url(#dropShadow)"/>
     ${args.warning}
     ${args.subdomainText ?? ''}
-    <text
-      x="32.5"
-      y="231"
-      font-size="${args.domainFontSize}px"
-      ${args.isSubdomain ? 'opacity="0.4"' : ''}
-      fill="white"
-      filter="url(#dropShadow)">${args.domain}</text>
+    ${args.domainText}
     <defs>
       <style>
         text {
@@ -261,8 +315,9 @@ function buildSvg(args: {
           font-variant-numeric: tabular-nums;
           font-weight: bold;
           font-variant-ligatures: none;
-          font-feature-settings: "ss01" on, "ss03" on;
-          -moz-font-feature-settings: "ss01" on, "ss03" on;
+          font-kerning: normal;
+          font-feature-settings: "ss01" on, "ss03" on, "tnum" on;
+          -moz-font-feature-settings: "ss01" on, "ss03" on, "tnum" on;
           line-height: 34px;
         }
       </style>
@@ -303,20 +358,19 @@ export async function renderNameImage(input: NameImageInput): Promise<string> {
 		})
 	}
 
-	const { domain, subdomainText } = processSubdomain(displayName)
-	const { domain: processedDomain, fontSize } = processDomain(domain)
+	const { domain, subdomain } = processSubdomain(displayName)
+	const domainText = await buildDomainText(domain, subdomain !== null)
+	const subdomainText = await buildSubdomainText(subdomain, domainText)
 
 	const background = avatar
 		? avatarImageElement(avatar)
 		: backgroundRect(normalized)
 	const warning = normalized ? '' : warningBadgeSvg()
 
-	return buildSvg({
+	return inlineEmojiAsImages(buildSvg({
 		background,
 		warning,
 		subdomainText,
-		domain: processedDomain,
-		domainFontSize: fontSize,
-		isSubdomain: subdomainText !== null,
-	})
+		domainText: domainText.markup,
+	}))
 }
