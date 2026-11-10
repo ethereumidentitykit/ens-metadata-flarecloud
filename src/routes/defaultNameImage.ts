@@ -3,6 +3,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Context } from 'hono'
 import type { Env } from '../env'
 import { respondFromCache } from '../lib/responseCache'
+import { SVG_CACHE_VERSION, PNG_CACHE_VERSION } from '../lib/nameImageVersions'
 import { ErrorSchema } from '../schemas'
 
 export const defaultNameImageRoutes = new OpenAPIHono<{ Bindings: Env }>({
@@ -49,7 +50,7 @@ const pngRoute = createRoute({
 	tags: ['metadata'],
 	summary: 'Render a default ENSv2 image as PNG',
 	description:
-		'Normalizes an ENS name or label, appends .eth to bare labels, and rasterizes the neutral V2 card as a 518×518 PNG. Does not fetch metadata, avatars, ownership, or registration status. Unicode and emoji may fetch font or Twemoji assets. Cached for one day.',
+		'Normalizes an ENS name or label, appends .eth to bare labels, and rasterizes the neutral V2 card as a 518×518 PNG. Does not fetch metadata, avatars, ownership, or registration status. Emoji use bundled Apple images; other Unicode may fetch fallback fonts. Cached for one day.',
 	request: { params: PathParams },
 	responses: {
 		200: {
@@ -95,7 +96,7 @@ async function renderDefaultImage(
 				'cache-control': 'public, max-age=86400',
 			},
 		})
-	})
+	}, format === 'svg' ? SVG_CACHE_VERSION : PNG_CACHE_VERSION)
 }
 
 defaultNameImageRoutes.openapi(svgRoute, c => renderDefaultImage(c, c.req.valid('param').label, 'svg') as never)

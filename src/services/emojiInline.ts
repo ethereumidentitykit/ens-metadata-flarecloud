@@ -1,186 +1,133 @@
-// Emoji-as-image substitution for the rasterization path. resvg-wasm 2.6.2
-// matches COLR/CPAL fonts (Twemoji, Noto Color Emoji COLRv1) but renders
-// zero pixels for color glyphs, so we sidestep font-based emoji entirely:
-// each emoji grapheme in the SVG is rewritten as an <image> element pointing
-// at the corresponding Twemoji SVG asset on jsdelivr. Edge-cached, so warm
-// requests pay nothing.
-//
-// Only invoked from rasterize.ts (the PNG path). The /image (SVG) endpoint
-// receives the original <text> with the literal emoji codepoints — browsers
-// render those with their system emoji font.
+import { getEmojiDataUrl } from './emojiAssets'
+import { containsEmoji, isEmojiGrapheme, measureNameText, segmentName } from './nameText'
 
-const TWEMOJI_CDN = "https://cdn.jsdelivr.net/npm/@twemoji/svg";
+// Labels come from our renderers, never arbitrary uploaded SVG. Each line is
+// a flat <text> element with explicit x/y/font-size and the shared Satoshi style.
+const TEXT_ELEMENT = /<text\b([^>]*)>([\s\S]*?)<\/text>/g
+const ATTRIBUTE = /([\w:-]+)="([^"]*)"/g
+const LAYOUT_ATTRIBUTES = new Set(['x', 'y', 'font-size', 'text-anchor', 'textLength', 'lengthAdjust'])
+const EMOJI_DESCENT = 0.12
 
-// Twemoji asset filename: hex codepoints joined with "-", with U+FE0F
-// (Variation Selector-16) always stripped. Matches the actual filenames in
-// the @twemoji/svg npm package — the older Twemoji JS lib kept FE0F for ZWJ
-// sequences but the asset filenames have never carried it (verified against
-// the CDN: e.g. `31-20e3.svg` for the keycap "1️⃣", `1f441-200d-1f5e8.svg`
-// for the eye-in-speech-bubble ZWJ sequence).
-export function emojiFilename(grapheme: string): string {
-	const codepoints: string[] = [];
-	for (const ch of grapheme) {
-		const cp = ch.codePointAt(0);
-		if (cp !== undefined && cp !== 0xfe0f) codepoints.push(cp.toString(16));
-	}
-	return codepoints.join("-");
+// A newer ENS normalizer can accept emoji not present in the pinned artwork.
+// Show a deterministic missing-glyph tile, rather than depending on OS fonts or
+// fetching another provider during image generation. No text/font in this SVG.
+const MISSING_EMOJI = 'data:image/svg+xml;base64,' + btoa(
+	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+	+ '<rect x="5" y="5" width="54" height="54" rx="8" fill="#eee" stroke="#888" stroke-width="3"/>'
+	+ '<path d="M22 24a10 10 0 0 1 20 0c0 7-10 7-10 14" fill="none" stroke="#888" stroke-width="5" stroke-linecap="round"/>'
+	+ '<circle cx="32" cy="47" r="3" fill="#888"/></svg>',
+)
+
+function escapeText(text: string): string {
+	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// Keycaps and flag pairs are emoji too, but neither is Extended_Pictographic.
-const EMOJI_RE = /\p{Extended_Pictographic}|[0-9#*]\uFE0F?\u20E3|\p{Regional_Indicator}{2}/u;
-export function isEmojiGrapheme(grapheme: string): boolean {
-	return EMOJI_RE.test(grapheme);
-}
-
-async function fetchTwemojiSvg(filename: string): Promise<string | null> {
-	try {
-		const res = await fetch(`${TWEMOJI_CDN}/${filename}.svg`, {
-			cf: { cacheTtl: 86_400, cacheEverything: true },
-		} as RequestInit);
-		if (!res.ok) return null;
-		return await res.text();
-	} catch {
-		return null;
-	}
-}
-
-// Twemoji SVGs are pure ASCII, so btoa is safe.
-function svgToDataUrl(svg: string): string {
-	return `data:image/svg+xml;base64,${btoa(svg)}`;
-}
-
-// Mirrors `estimateAdvance` in nameImage.ts — keep in sync. Returns advance
-// width in px at 20px font-size; caller scales by fontSize/20.
-function advanceAt20px(grapheme: string): number {
-	if (isEmojiGrapheme(grapheme)) return 20;
-	const cp = grapheme.codePointAt(0) ?? 0;
-	if (cp < 0x0300 && grapheme.length === 1) return 14;
-	if (cp >= 0x1f000) return 20;
-	if (
-		(cp >= 0x3000 && cp <= 0x9fff) ||
-		(cp >= 0xac00 && cp <= 0xd7af) ||
-		(cp >= 0xf900 && cp <= 0xfaff)
-	) {
-		return 17;
-	}
-	return 18;
-}
-
-function escapeXmlText(s: string): string {
-	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-type TextAttrs = {
-	x: number;
-	y: number;
-	fontSize: number;
-	rest: string; // verbatim attributes minus x/y/font-size, applied to each emitted <text>
-};
-
-function parseTextAttrs(attrStr: string): TextAttrs | null {
-	const x = attrStr.match(/\bx="([^"]+)"/);
-	const y = attrStr.match(/\by="([^"]+)"/);
-	const fs = attrStr.match(/\bfont-size="([\d.]+)(?:px)?"/);
-	if (!x || !y || !fs) return null;
-	const xNum = Number.parseFloat(x[1]!);
-	const yNum = Number.parseFloat(y[1]!);
-	const fsNum = Number.parseFloat(fs[1]!);
-	if (!Number.isFinite(xNum) || !Number.isFinite(yNum) || !Number.isFinite(fsNum)) return null;
-	const rest = attrStr
-		.replace(/\bx="[^"]*"/, "")
-		.replace(/\by="[^"]*"/, "")
-		.replace(/\bfont-size="[^"]*"/, "")
-		.replace(/\s+/g, " ")
-		.trim();
-	return { x: xNum, y: yNum, fontSize: fsNum, rest };
-}
-
-type MeasureText = (text: string, fontSize: number) => Promise<number>;
-
-async function buildEmojiTextRuns(content: string, attrs: TextAttrs, measureText?: MeasureText): Promise<string> {
-	const segmenter = new Intl.Segmenter();
-	const segments = [...segmenter.segment(content)].map((s) => s.segment);
-	const advanceScale = attrs.fontSize / 20;
-	const parts: string[] = [];
-	let textBuffer = "";
-	let textStartX = attrs.x;
-	let cursorX = attrs.x;
-
-	const flushText = async () => {
-		if (!textBuffer) return;
-		if (measureText) cursorX = textStartX + await measureText(textBuffer, attrs.fontSize);
-		parts.push(
-			`<text x="${textStartX.toFixed(2)}" y="${attrs.y}" font-size="${attrs.fontSize}px" ${attrs.rest}>${escapeXmlText(textBuffer)}</text>`,
-		);
-		textBuffer = "";
-	};
-
-	for (const seg of segments) {
-		const segWidth = advanceAt20px(seg) * advanceScale;
-		if (isEmojiGrapheme(seg)) {
-			await flushText();
-			const emojiStartX = cursorX;
-			const filename = emojiFilename(seg);
-			const svg = await fetchTwemojiSvg(filename);
-			if (svg) {
-				const dataUrl = svgToDataUrl(svg);
-				// Image bottom aligns with text baseline; image height equals fontSize.
-				const imgY = attrs.y - attrs.fontSize;
-				parts.push(
-					`<image href="${dataUrl}" x="${cursorX.toFixed(2)}" y="${imgY.toFixed(2)}" width="${attrs.fontSize}" height="${attrs.fontSize}"/>`,
-				);
-			} else {
-				// CDN miss — fall back to the literal codepoint so resvg at least
-				// emits whatever it can (likely tofu).
-				textBuffer = seg;
-				textStartX = cursorX;
-				await flushText();
-			}
-			cursorX = emojiStartX + segWidth;
-			textStartX = cursorX;
-		} else {
-			textBuffer += seg;
-			cursorX += segWidth;
+function decodeText(text: string): string {
+	return text.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (entity, value: string) => {
+		if (value[0] === '#') {
+			const codepoint = value[1]?.toLowerCase() === 'x'
+				? Number.parseInt(value.slice(2), 16) : Number.parseInt(value.slice(1), 10)
+			return codepoint <= 0x10ffff && !(codepoint >= 0xd800 && codepoint <= 0xdfff)
+				? String.fromCodePoint(codepoint) : entity
 		}
-	}
-	await flushText();
-	return parts.join("");
+		return ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" } as Record<string, string>)[value] ?? entity
+	})
 }
 
-// Match a <text>…</text> whose content has no nested elements (no '<'). Our
-// template only nests <tspan> for very long names (segLen > 25); those don't
-// occur with emoji-only inputs in practice, so we skip substitution there and
-// fall back to resvg's default (blank/tofu) for those edge cases.
-const SIMPLE_TEXT_RE = /<text\s+([^>]*)>([^<]*)<\/text>/g;
+function numberAttribute(value: string | undefined): number {
+	if (!value || !/^-?(?:\d+\.?\d*|\.\d+)(?:px)?$/.test(value)) return NaN
+	return Number.parseFloat(value)
+}
 
-export async function inlineEmojiAsImages(svg: string): Promise<string> {
-	const matches = [...svg.matchAll(SIMPLE_TEXT_RE)];
-	if (matches.length === 0) return svg;
+function coordinate(value: number): string {
+	return value.toFixed(3)
+}
 
-	// Pre-check: only do work for texts that actually contain emoji.
-	const work = matches
-		.map((m) => ({ match: m, hasEmoji: EMOJI_RE.test(m[2] ?? "") }))
-		.filter((w) => w.hasEmoji);
-	if (work.length === 0) return svg;
-	// V2's fitted label and PNG text runs must use the same font metrics.
-	const measureText = /<svg\b[^>]*data-ens-version="2"/.test(svg)
-		? (await import('./nameImageV2')).measureV2Text
-		: undefined;
+type Label = {
+	full: string
+	text: string
+	x: number
+	y: number
+	fontSize: number
+	anchor: string
+	attributes: string
+}
 
-	const replacements = await Promise.all(
-		work.map(async ({ match }) => {
-			const attrStr = match[1] ?? "";
-			const content = match[2] ?? "";
-			const attrs = parseTextAttrs(attrStr);
-			if (!attrs) return null;
-			const replacement = await buildEmojiTextRuns(content, attrs, measureText);
-			return { full: match[0], replacement };
-		}),
-	);
-
-	let out = svg;
-	for (const r of replacements) {
-		if (r) out = out.replace(r.full, r.replacement);
+function parseLabel(full: string, rawAttributes: string, content: string): Label | null {
+	const text = decodeText(content.trim())
+	if (!containsEmoji(text)) return null
+	if (content.includes('<')) throw new Error('Emoji labels must use a separate text element per line')
+	const attributes = new Map([...rawAttributes.matchAll(ATTRIBUTE)].map(match => [match[1]!, match[2]!]))
+	const x = numberAttribute(attributes.get('x'))
+	const y = numberAttribute(attributes.get('y'))
+	const fontSize = numberAttribute(attributes.get('font-size'))
+	if (![x, y, fontSize].every(Number.isFinite) || fontSize <= 0) {
+		throw new Error('Emoji labels require finite x/y coordinates and a positive font-size')
 	}
-	return out;
+	return {
+		full, text, x, y, fontSize,
+		anchor: attributes.get('text-anchor') ?? 'start',
+		attributes: rawAttributes.replace(ATTRIBUTE, (attribute, name: string) =>
+			LAYOUT_ATTRIBUTES.has(name) ? '' : attribute).trim(),
+	}
+}
+
+/** Embed Apple artwork once per distinct image and position complete graphemes
+ * using the same advances that fitted the label. No network or system fonts. */
+export async function inlineEmojiAsImages(svg: string): Promise<string> {
+	const labels: Label[] = []
+	for (const match of svg.matchAll(TEXT_ELEMENT)) {
+		const label = parseLabel(match[0], match[1]!, match[2]!)
+		if (label) labels.push(label)
+	}
+	if (!labels.length) return svg
+
+	const graphemes = new Set(labels.flatMap(label => segmentName(label.text).filter(isEmojiGrapheme)))
+	const assets = new Map(await Promise.all([...graphemes].map(async grapheme =>
+		[grapheme, await getEmojiDataUrl(grapheme) ?? MISSING_EMOJI] as const)))
+	const symbols = new Map<string, string>()
+	const replacements = new Map<string, string>()
+	for (const label of labels) {
+		let x = label.x
+		if (label.anchor === 'middle' || label.anchor === 'end') {
+			const width = await measureNameText(label.text, label.fontSize)
+			x -= label.anchor === 'middle' ? width / 2 : width
+		}
+		const runs: string[] = []
+		let text = ''
+		const flushText = async () => {
+			if (!text) return
+			const width = await measureNameText(text, label.fontSize)
+			// resvg does not apply every Satoshi OpenType feature browsers do.
+			// Fix each run to its measured advance so the next emoji cannot drift.
+			const fit = width > 0 ? ` textLength="${coordinate(width)}" lengthAdjust="spacingAndGlyphs"` : ''
+			runs.push(`<text x="${coordinate(x)}" y="${coordinate(label.y)}" font-size="${label.fontSize}px"${fit}>${escapeText(text)}</text>`)
+			x += width
+			text = ''
+		}
+		for (const grapheme of segmentName(label.text)) {
+			const asset = assets.get(grapheme)
+			if (!asset) {
+				text += grapheme
+				continue
+			}
+			await flushText()
+			let id = symbols.get(asset)
+			if (!id) {
+				id = `ens-apple-emoji-${symbols.size}`
+				symbols.set(asset, id)
+			}
+			const y = label.y - label.fontSize * (1 - EMOJI_DESCENT)
+			runs.push(`<use href="#${id}" x="${coordinate(x)}" y="${coordinate(y)}" width="${label.fontSize}" height="${label.fontSize}"/>`)
+			x += label.fontSize
+		}
+		await flushText()
+		// Move opacity/filter/transform and presentation attributes to the group:
+		// they must affect the image glyphs as well as the surviving text runs.
+		replacements.set(label.full, `<g data-emoji-line="" ${label.attributes}>${runs.join('')}</g>`)
+	}
+	const definitions = [...symbols].map(([asset, id]) =>
+		`<symbol id="${id}" viewBox="0 0 1 1"><image href="${asset}" width="1" height="1"/></symbol>`).join('')
+	return svg.replace(TEXT_ELEMENT, full => replacements.get(full) ?? full)
+		.replace(/<\/svg>\s*$/, `<defs>${definitions}</defs></svg>`)
 }

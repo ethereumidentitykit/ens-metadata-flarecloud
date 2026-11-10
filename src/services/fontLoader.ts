@@ -134,8 +134,10 @@ export async function loadFallbackFontBuffers(text: string): Promise<Uint8Array[
 	if (!text) return [];
 	const buffers = await Promise.all(
 		FALLBACK_FONTS.map(async (f) => {
+			// Satoshi includes the ellipsis used by bounded name layouts. It is
+			// inside Noto Sans's broad range but needs no fallback request.
 			const chars = Array.from(text)
-				.filter((c) => f.test.test(c))
+				.filter((c) => c !== "\u2026" && f.test.test(c))
 				.join("");
 			if (!chars) return null;
 			const data = await loadGoogleFontSubset(f.family, f.weight, chars);

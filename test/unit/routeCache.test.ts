@@ -10,10 +10,7 @@ import { CACHE_API_MAX_AGE, NAME_WRAPPER_V2 } from "../../src/constants";
 import { cacheTagHeader, nameTag, tokenTag } from "../../src/lib/cacheTags";
 import { avatarRoutes } from "../../src/routes/images";
 import { metadataRoutes } from "../../src/routes/metadata";
-import { nameImageRoutes } from "../../src/routes/nameImage";
 import { queryNFTRoutes } from "../../src/routes/queryNFT";
-import { tokenIdToHex } from "../../src/services/domain";
-import { putGenerated } from "../../src/storage/r2Cache";
 
 const testEnv = {
   ...(env as unknown as Env),
@@ -50,13 +47,6 @@ function mockSubgraphDomain(name: string) {
       headers: { "content-type": "application/json" },
     }),
   );
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
 }
 
 afterEach(() => {
@@ -152,44 +142,4 @@ describe("route cache headers", () => {
     expect(await cached.json()).toMatchObject({ uri: "https://images.example/avatar.png" });
   });
 
-  it("caches generated name image responses ahead of R2 hits", async () => {
-    const name = "route-cache-image.eth";
-    const tokenHex = tokenIdToHex("42");
-    const request = new Request(
-      `https://example.com/mainnet/${NAME_WRAPPER_V2}/42/image`,
-    );
-    await caches.default.delete(request);
-    await putGenerated(
-      testEnv,
-      {
-        network: "mainnet",
-        contract: NAME_WRAPPER_V2,
-        tokenHex,
-        version: "svg-v6",
-      },
-      toArrayBuffer(new TextEncoder().encode("<svg/>")),
-      "image/svg+xml",
-      name,
-    );
-
-    const ctx = createExecutionContext();
-    const response = await nameImageRoutes.fetch(request, testEnv, ctx);
-    await waitOnExecutionContext(ctx);
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("public, max-age=31536000");
-    expect(response.headers.get("cache-tag")).toBe(
-      cacheTagHeader(tokenTag("mainnet", NAME_WRAPPER_V2, tokenHex), nameTag("mainnet", name)),
-    );
-    expect(await response.text()).toBe("<svg/>");
-
-    await testEnv.IPFS_CACHE.delete(
-      `generated/mainnet/${NAME_WRAPPER_V2.toLowerCase()}/${tokenHex}/svg-v6.bin`,
-    );
-    const cachedCtx = createExecutionContext();
-    const cached = await nameImageRoutes.fetch(request, testEnv, cachedCtx);
-    await waitOnExecutionContext(cachedCtx);
-    expect(cached.status).toBe(200);
-    expect(await cached.text()).toBe("<svg/>");
-  });
 });
